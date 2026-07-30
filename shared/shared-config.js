@@ -18,7 +18,7 @@
    belakangan.
    ===================================================================== */
 window.APP_CONFIG = {
-  // ID Google Spreadsheet ("Master Data")
+  ID Google Spreadsheet ("Master Data")
   sheetId: "1ptKJYzGM4OXmVspGgRT_X31uluEzko0dafCa6ZZjQDA",
 
   // Seberapa sering dashboard mengecek ulang data ke Google Sheet (detik)
