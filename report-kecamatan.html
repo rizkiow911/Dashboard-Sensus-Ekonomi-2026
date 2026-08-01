@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report Kecamatan — SE2026 Kota Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti halaman lain, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Dipakai tombol "Export ke Excel" di halaman ini. -->
+<script src="shared/xlsx.full.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Report Kecamatan — di luar sistem token bersama,
+     mengikuti pola halaman lain (style per-halaman, bukan global). Sengaja
+     dibuat semirip mungkin dengan report-petugas.html supaya dua report
+     ini terasa satu keluarga. */
+  main > * + * { margin-top: 32px !important; }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* ---- catatan definisi progres, ditaruh di dalam hero (pengganti
+     threshold-note di report-petugas.html — di sini bukan soal ambang
+     pembayaran, tapi penjelasan dua definisi progres yang dipakai) ---- */
+  .threshold-note {
+    display: flex; align-items: center; gap: 10px; margin-top: 18px;
+    padding: 10px 14px; border: 1px dashed var(--gold); border-radius: var(--radius);
+    background: var(--gold-soft); font-size: 12.5px; color: var(--ink); flex-wrap: wrap;
+  }
+  .threshold-note .tag {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+
+  /* ---- toolbar: tab kecamatan + pencarian + toggle + export ---- */
+  .toolbar { display: flex; flex-direction: column; gap: 14px; }
+  .kec-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .kec-tab {
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+    cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
+  }
+  .kec-tab:hover { border-color: var(--ink-soft); color: var(--ink); }
+  .kec-tab.is-active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .kec-tab .n { opacity: 0.7; margin-left: 5px; }
+
+  .toolbar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+  .toolbar-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .search-field { position: relative; }
+  .search-field input {
+    font-family: var(--font-body); font-size: 13.5px; padding: 9px 12px 9px 12px; width: 220px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+  }
+  .search-field input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .toggle-field { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+  .toggle-field input { accent-color: var(--alert); width: 15px; height: 15px; cursor: pointer; }
+  .export-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn.small { padding: 8px 14px; font-size: 12.5px; }
+
+  /* ---- panel tabel kelurahan ---- */
+  .role-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .role-count { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+  .role-count .bad { color: var(--alert); font-weight: 500; }
+
+  table.kelurahan-table td.num, table.kelurahan-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.kelurahan-table td.pct, table.kelurahan-table th.pct { text-align: right; font-family: var(--font-mono); font-weight: 500; }
+  table.kelurahan-table tr.row-below td { background: var(--alert-soft); }
+  table.kelurahan-table tr.row-below td.pct.main { color: var(--alert); }
+  table.kelurahan-table tr.row-unknown td { background: var(--gold-soft); }
+  table.kelurahan-table td.name-cell { font-weight: 500; max-width: 220px; }
+  table.kelurahan-table td, table.kelurahan-table th { max-width: none; }
+
+  .empty-note { padding: 22px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+</style>
+</head>
+<body data-page="kecamatan">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus3" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus3)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Report Kecamatan <span class="num">Progres Pendataan per Kelurahan/Desa</span></h1>
+      <p class="hero-sub">Progres pendataan tiap Kelurahan/Desa, dikelompokkan per kecamatan. Formula identik dengan progres kecamatan di Halaman Utama — dihitung otomatis dari view <strong>v_progres_kelurahan</strong> di Supabase setiap sesi.</p>
+      <div class="threshold-note">
+        <span class="tag">Definisi Progres</span>
+        <span><strong>% Progres (tanpa Draft)</strong> jadi acuan utama tabel &amp; file Excel di bawah — status dokumen selain OPEN &amp; DRAFT dibagi Assignment. Kelurahan dengan progres di bawah <strong id="thresholdLabel">40%</strong> ditandai <strong>Perlu Percepatan</strong>.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Supabase belum terbaca — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KPI STRIP ============================= -->
+  <section aria-label="Ringkasan se-Kota Jakarta Timur">
+    <p class="section-label">Ringkasan &middot; se-Kota Jakarta Timur</p>
+    <div class="kpi-strip reveal" id="kpiStrip"></div>
+  </section>
+
+  <!-- ============================= TOOLBAR ============================= -->
+  <section class="panel reveal">
+    <div class="toolbar">
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih kecamatan</p>
+        <div class="kec-tabs" id="kecTabs"></div>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="search-field">
+            <input type="text" id="searchInput" placeholder="Cari nama kelurahan/desa&hellip;" autocomplete="off">
+          </div>
+          <label class="toggle-field">
+            <input type="checkbox" id="onlyBelowToggle">
+            Hanya tampilkan progres &lt; 40%
+          </label>
+          <label class="toggle-field">
+            <input type="checkbox" id="showUnknownToggle">
+            Sertakan baris "Tidak Diketahui"
+          </label>
+        </div>
+        <div class="export-group">
+          <button class="btn secondary small" id="btnExportKec">Export Kecamatan Ini (Excel)</button>
+          <button class="btn small" id="btnExportAll">Export Semua Kecamatan (Excel)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= TABEL KELURAHAN ============================= -->
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Progres per Kelurahan/Desa</h2>
+        <p class="panel-desc" id="kelurahanPanelDesc">Progres pendataan per kelurahan/desa.</p>
+      </div>
+      <span class="role-count" id="kelurahanCount"></span>
+    </div>
+    <div class="table-scroll" id="kelurahanTableWrap" style="max-height:640px;"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  // Ambang progres pendataan untuk badge "Perlu Percepatan". Ganti angka
+  // ini saja kalau ambangnya berubah — dipakai di seluruh halaman (badge
+  // tabel, highlight baris, dan file Excel).
+  const THRESHOLD_PCT = 40;
+
+  let state = {
+    all: [],       // seluruh baris dari v_progres_kelurahan, termasuk is_unknown
+    kecList: [],   // ["Semua Kecamatan", ...kecamatan definitif terurut abjad]
+    activeKec: "Semua Kecamatan",
+    search: "",
+    onlyBelow: false,
+    showUnknown: false
+  };
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function fmt1(n) { return (Number(n) || 0).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  // Baris definitif = bukan is_unknown. Dipakai sebagai basis KPI, tab
+  // kecamatan, dan (default) tabel — sama pola dengan pemisahan baris
+  // "Tidak Diketahui" di Halaman Utama.
+  function definitiveRows(rows) { return rows.filter(r => !r.isUnknown); }
+  function unknownRows(rows) { return rows.filter(r => r.isUnknown); }
+
+  // ---------------------------------------------------------------------
+  // KPI STRIP — selalu dihitung dari SELURUH kelurahan definitif (tidak
+  // terpengaruh tab kecamatan yang sedang aktif), supaya jadi angka
+  // acuan tetap.
+  // ---------------------------------------------------------------------
+  function renderKpiStrip(rows) {
+    const def = definitiveRows(rows);
+    const kecSet = new Set(def.map(r => r.kecamatan));
+    const below = def.filter(r => r.progresExclDraftPct < THRESHOLD_PCT).length;
+    const avgExcl = def.length ? def.reduce((s, r) => s + r.progresExclDraftPct, 0) / def.length : 0;
+    const avgUsaha = def.length ? def.reduce((s, r) => s + r.progresUsahaPct, 0) / def.length : 0;
+    const avgKeluarga = def.length ? def.reduce((s, r) => s + r.progresKeluargaPct, 0) / def.length : 0;
+    const totalUsahaTidakDitemukan = def.reduce((s, r) => s + r.usahaTidakDitemukan, 0);
+    const totalRtTidakDitemukan = def.reduce((s, r) => s + r.rumahTanggaTidakDitemukan, 0);
+
+    const cells = [
+      { value: fmt(kecSet.size), label: "Total kecamatan" },
+      { value: fmt(def.length), label: "Total kelurahan/desa" },
+      { value: fmt(below), label: "Kelurahan di bawah 40%", accentClass: below ? "alert" : "" },
+      { value: fmt1(avgExcl) + "%", label: "Rata-rata % Progres (tanpa Draft)", accentClass: "accent" },
+      { value: fmt1(avgUsaha) + "%", label: "Rata-rata % Progres Usaha" },
+      { value: fmt1(avgKeluarga) + "%", label: "Rata-rata % Progres Keluarga" },
+      { value: fmt(totalUsahaTidakDitemukan), label: "Total Usaha Tidak Ditemukan" },
+      { value: fmt(totalRtTidakDitemukan), label: "Total Rumah Tangga Tidak Ditemukan" }
+    ];
+    document.getElementById("kpiStrip").innerHTML = cells.map(c => `
+      <div class="kpi-cell">
+        <div class="kpi-value ${c.accentClass || ""}">${c.value}</div>
+        <div class="kpi-label">${c.label}</div>
+      </div>`).join("");
+  }
+
+  // ---------------------------------------------------------------------
+  // TAB KECAMATAN
+  // ---------------------------------------------------------------------
+  function buildKecList(rows) {
+    const set = new Set();
+    definitiveRows(rows).forEach(r => r.kecamatan && set.add(r.kecamatan));
+    return ["Semua Kecamatan", ...Array.from(set).sort((a, b) => a.localeCompare(b, "id"))];
+  }
+
+  function renderKecTabs() {
+    const mount = document.getElementById("kecTabs");
+    const def = definitiveRows(state.all);
+    mount.innerHTML = state.kecList.map(k => {
+      const isAll = k === "Semua Kecamatan";
+      const count = isAll ? def.length : def.filter(r => r.kecamatan === k).length;
+      const cls = ["kec-tab"];
+      if (k === state.activeKec) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-kec="${encodeURIComponent(k)}">${k}<span class="n">${count}</span></button>`;
+    }).join("");
+    mount.querySelectorAll(".kec-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeKec = decodeURIComponent(btn.getAttribute("data-kec"));
+        renderKecTabs();
+        applyFilters();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // FILTER + TABEL
+  // ---------------------------------------------------------------------
+  function filterRows() {
+    let out = state.showUnknown ? state.all.slice() : definitiveRows(state.all);
+    if (state.activeKec !== "Semua Kecamatan") out = out.filter(r => r.kecamatan === state.activeKec);
+    if (state.search.trim()) {
+      const q = state.search.trim().toLowerCase();
+      out = out.filter(r => r.kelurahan.toLowerCase().includes(q));
+    }
+    if (state.onlyBelow) out = out.filter(r => r.isUnknown || r.progresExclDraftPct < THRESHOLD_PCT);
+    // Terendah lebih dulu — supaya kandidat "perlu percepatan" langsung
+    // terlihat di baris atas tabel, sama semangatnya dengan Report Petugas.
+    // Baris "Tidak Diketahui" (kalau disertakan) selalu ditaruh paling
+    // bawah, karena progresnya sering >100% dan bukan wilayah definitif.
+    return out.slice().sort((a, b) => {
+      if (a.isUnknown !== b.isUnknown) return a.isUnknown ? 1 : -1;
+      return a.progresExclDraftPct - b.progresExclDraftPct;
+    });
+  }
+
+  function renderTable(rows, showKecCol) {
+    const wrap = document.getElementById("kelurahanTableWrap");
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada data yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+    const kecTh = showKecCol ? "<th>Kecamatan</th>" : "";
+    const rowsHtml = rows.map(r => {
+      const kecTd = showKecCol ? `<td>${r.kecamatan}</td>` : "";
+      const cls = [];
+      if (r.isUnknown) cls.push("row-unknown");
+      else if (r.progresExclDraftPct < THRESHOLD_PCT) cls.push("row-below");
+      return `
+        <tr class="${cls.join(" ")}">
+          ${kecTd}
+          <td class="name-cell">${r.kelurahan || "(tanpa nama)"}</td>
+          <td class="num">${fmt(r.jumlahSls)}</td>
+          <td class="num">${fmt(r.assignment)}</td>
+          <td class="num">${fmt(r.prelist)}</td>
+          <td class="pct main">${fmt1(r.progresExclDraftPct)}%</td>
+          <td class="pct">${fmt1(r.progresInclDraftPct)}%</td>
+          <td class="pct">${fmt1(r.progresUsahaPct)}%</td>
+          <td class="pct">${fmt1(r.progresKeluargaPct)}%</td>
+          <td class="num">${fmt(r.usahaTidakDitemukan)}</td>
+          <td class="num">${fmt(r.rumahTanggaTidakDitemukan)}</td>
+        </tr>`;
+    }).join("");
+    wrap.innerHTML = `
+      <table class="data-table kelurahan-table">
+        <thead>
+          <tr>
+            ${kecTh}
+            <th>Kelurahan/Desa</th>
+            <th class="num">Jml SLS</th>
+            <th class="num">Assignment</th>
+            <th class="num">Prelist</th>
+            <th class="pct">% Progres (tanpa Draft)</th>
+            <th class="pct">% Progres (termasuk Draft)</th>
+            <th class="pct">% Usaha</th>
+            <th class="pct">% Keluarga</th>
+            <th class="num">Usaha Tidak Ditemukan</th>
+            <th class="num">Rumah Tangga Tidak Ditemukan</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function applyFilters() {
+    const showKecCol = state.activeKec === "Semua Kecamatan";
+    const rows = filterRows();
+    const below = rows.filter(r => !r.isUnknown && r.progresExclDraftPct < THRESHOLD_PCT).length;
+    document.getElementById("kelurahanCount").innerHTML = `${fmt(rows.length)} kelurahan/desa${below ? ` &middot; <span class="bad">${fmt(below)} di bawah 40%</span>` : ""}`;
+
+    const kecSuffix = state.activeKec === "Semua Kecamatan" ? "se-Kota Jakarta Timur" : `Kecamatan ${state.activeKec}`;
+    document.getElementById("kelurahanPanelDesc").textContent = `Progres pendataan per kelurahan/desa, ${kecSuffix}. Diurutkan dari progres terendah.`;
+
+    renderTable(rows, showKecCol);
+  }
+
+  // ---------------------------------------------------------------------
+  // EXPORT KE EXCEL
+  // ---------------------------------------------------------------------
+  function round1(n) { return Math.round((Number(n) || 0) * 10) / 10; }
+
+  function toExportRow(r) {
+    return {
+      "Kecamatan": r.kecamatan,
+      "Kelurahan/Desa": r.kelurahan,
+      "Jumlah SLS": r.jumlahSls,
+      "Assignment": r.assignment,
+      "Prelist": r.prelist,
+      "% Progres (tanpa Draft)": round1(r.progresExclDraftPct),
+      "% Progres (termasuk Draft)": round1(r.progresInclDraftPct),
+      "Target Usaha": r.targetUsaha,
+      "Terdata Usaha": r.terdataUsaha,
+      "% Progres Usaha": round1(r.progresUsahaPct),
+      "Target Keluarga": r.targetKeluarga,
+      "Hasil Keluarga": r.hasilKeluarga,
+      "% Progres Keluarga": round1(r.progresKeluargaPct),
+      "Total Usaha Tidak Ditemukan": r.usahaTidakDitemukan,
+      "Total Rumah Tangga Tidak Ditemukan": r.rumahTanggaTidakDitemukan
+    };
+  }
+
+  function sheetSafeName(name) {
+    // Batasan Excel: nama sheet maks 31 karakter, tanpa karakter : \ / ? * [ ]
+    return name.replace(/[:\\/?*\[\]]/g, "").slice(0, 31);
+  }
+
+  function addSheet(wb, rows, sheetName) {
+    const data = rows.map(toExportRow);
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = Object.keys(data[0] || { a: 1 }).map(() => ({ wch: 18 }));
+    XLSX.utils.book_append_sheet(wb, ws, sheetSafeName(sheetName));
+  }
+
+  function buildRingkasanSheet(wb) {
+    const kecs = state.kecList.filter(k => k !== "Semua Kecamatan");
+    const rows = kecs.map(k => {
+      const kel = definitiveRows(state.all).filter(r => r.kecamatan === k);
+      return {
+        "Kecamatan": k,
+        "Jumlah Kelurahan/Desa": kel.length,
+        "Kelurahan Perlu Percepatan (<40%)": kel.filter(r => r.progresExclDraftPct < THRESHOLD_PCT).length,
+        "Rata-rata % Progres (tanpa Draft)": round1(kel.length ? kel.reduce((s, r) => s + r.progresExclDraftPct, 0) / kel.length : 0),
+        "Rata-rata % Progres (termasuk Draft)": round1(kel.length ? kel.reduce((s, r) => s + r.progresInclDraftPct, 0) / kel.length : 0),
+        "Rata-rata % Progres Usaha": round1(kel.length ? kel.reduce((s, r) => s + r.progresUsahaPct, 0) / kel.length : 0),
+        "Rata-rata % Progres Keluarga": round1(kel.length ? kel.reduce((s, r) => s + r.progresKeluargaPct, 0) / kel.length : 0),
+        "Total Usaha Tidak Ditemukan": kel.reduce((s, r) => s + r.usahaTidakDitemukan, 0),
+        "Total Rumah Tangga Tidak Ditemukan": kel.reduce((s, r) => s + r.rumahTanggaTidakDitemukan, 0)
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = Object.keys(rows[0] || { a: 1 }).map(() => ({ wch: 24 }));
+    XLSX.utils.book_append_sheet(wb, ws, "Ringkasan");
+  }
+
+  function todayStamp() {
+    return new Date().toLocaleDateString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-");
+  }
+
+  function exportKecamatanExcel() {
+    const kec = state.activeKec;
+    const wb = XLSX.utils.book_new();
+    if (kec === "Semua Kecamatan") {
+      buildRingkasanSheet(wb);
+      addSheet(wb, definitiveRows(state.all), "Semua Kelurahan");
+      if (unknownRows(state.all).length) addSheet(wb, unknownRows(state.all), "Tidak Diketahui");
+      XLSX.writeFile(wb, `Report_Kecamatan_SemuaKecamatan_${todayStamp()}.xlsx`);
+      return;
+    }
+    const rows = definitiveRows(state.all).filter(r => r.kecamatan === kec);
+    if (rows.length) addSheet(wb, rows, "Kelurahan"); else XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Tidak ada data kelurahan"]]), "Kelurahan");
+    XLSX.writeFile(wb, `Report_Kecamatan_${sheetSafeName(kec)}_${todayStamp()}.xlsx`);
+  }
+
+  function exportAllExcel() {
+    const wb = XLSX.utils.book_new();
+    buildRingkasanSheet(wb);
+    const kecs = state.kecList.filter(k => k !== "Semua Kecamatan");
+    kecs.forEach(k => {
+      const rows = definitiveRows(state.all).filter(r => r.kecamatan === k);
+      if (rows.length) addSheet(wb, rows, k);
+    });
+    if (unknownRows(state.all).length) addSheet(wb, unknownRows(state.all), "Tidak Diketahui");
+    XLSX.writeFile(wb, `Report_Kecamatan_SemuaKecamatan_${todayStamp()}.xlsx`);
+  }
+
+  // ---------------------------------------------------------------------
+  // MUAT DATA
+  // ---------------------------------------------------------------------
+  function renderAll(rows, sourceLabel, isDemo) {
+    state.all = rows;
+    state.kecList = buildKecList(rows);
+    if (state.kecList.indexOf(state.activeKec) === -1) state.activeKec = "Semua Kecamatan";
+
+    renderKpiStrip(rows);
+    renderKecTabs();
+    applyFilters();
+
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+    document.getElementById("demoBanner").classList.toggle("is-visible", !!isDemo);
+  }
+
+  async function loadData() {
+    const cfg = window.APP_CONFIG;
+    if (cfg.dataSource !== "supabase") {
+      throw new Error('dataSource bukan "supabase" — Report Kecamatan hanya membaca dari view Supabase (tidak ada padanan di Google Sheets lama), lihat catatan di shared-config.js.');
+    }
+    return window.SupabaseEngine.fetchProgresKelurahanSupabase();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    document.getElementById("searchInput").addEventListener("input", (e) => { state.search = e.target.value; applyFilters(); });
+    document.getElementById("onlyBelowToggle").addEventListener("change", (e) => { state.onlyBelow = e.target.checked; applyFilters(); });
+    document.getElementById("showUnknownToggle").addEventListener("change", (e) => { state.showUnknown = e.target.checked; renderKecTabs(); applyFilters(); });
+    document.getElementById("btnExportKec").addEventListener("click", exportKecamatanExcel);
+    document.getElementById("btnExportAll").addEventListener("click", exportAllExcel);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.XLSX) {
+      problems.unshift("Library SheetJS (shared/xlsx.full.min.js) gagal dimuat — tombol Export ke Excel tidak akan berfungsi.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[report-kecamatan] memakai data contoh —", reason);
+      document.getElementById("demoBannerText").textContent =
+        "Supabase belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.";
+      const fb = window.FALLBACK_DATA.kelurahanProgres || [];
+      renderAll(fb, "Data contoh — Supabase belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — Supabase belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadData();
+        const snapshot = JSON.stringify(data);
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const sourceLabel = `Supabase (v_progres_kelurahan) &middot; ${data.length} kelurahan/desa terbaca`;
+        renderAll(data, sourceLabel, false);
+        window.setSyncBadge("Diperbarui &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[report-kecamatan] gagal memuat data:", err.message);
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+      useFallback("supabaseUrl / supabaseAnonKey belum diisi di shared-config.js");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Diagnosis Report Kategori Petugas</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 16px; color: #1a1a2e; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 32px; border-bottom: 2px solid #eee; padding-bottom: 6px; }
+  .ok { color: #0a7a3c; font-weight: 700; }
+  .fail { color: #c62828; font-weight: 700; }
+  .warn { color: #b8860b; font-weight: 700; }
+  pre { background: #f5f5f7; padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 13px; }
+  td, th { border: 1px solid #ddd; padding: 4px 8px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f5; }
+  .rownum { background: #f0f0f5; font-weight: 700; width: 28px; text-align: center; }
+  .headerguess { background: #fff3cd; }
+  .box { border: 1px solid #ddd; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+  .step { display: flex; gap: 10px; align-items: baseline; }
+  .step b { min-width: 26px; }
+</style>
+</head>
+<body>
+<h1>🔎 Diagnosis: kenapa "Report Kategori Petugas" jatuh ke mode demo?</h1>
+<p>Halaman ini mengambil <b>data mentah apa adanya</b> (tanpa asumsi headerRow, tanpa try/catch yang menyembunyikan error) dari kedua tab yang dipakai <code>report-kategori-petugas.html</code>, lalu menunjukkan persis di mana pipeline-nya berhenti. Buka halaman ini lewat GitHub Pages yang sama (bukan dibuka sebagai file lokal), supaya kondisi network-nya identik dengan dashboard asli.</p>
+
+<div id="out">Memuat shared-config.js ...</div>
+
+<script src="shared/shared-config.js"></script>
+<script>
+(async function () {
+  const out = document.getElementById("out");
+  const cfg = window.APP_CONFIG;
+  const log = [];
+
+  function esc(s) { return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+  function section(title) {
+    const h = document.createElement("h2");
+    h.textContent = title;
+    out.appendChild(h);
+    const box = document.createElement("div");
+    box.className = "box";
+    out.appendChild(box);
+    return box;
+  }
+
+  // ---- parser CSV sederhana, TAHAN koma di dalam kutip, TIDAK buang baris kosong ----
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], field = "", inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i], next = text[i + 1];
+      if (inQuotes) {
+        if (c === '"' && next === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') { inQuotes = true; }
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\r") { /* skip */ }
+        else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else { field += c; }
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  out.innerHTML = "";
+
+  // ---- 0. Config check ----
+  {
+    const box = section("0. shared-config.js");
+    if (!cfg) {
+      box.innerHTML = `<span class="fail">✗ window.APP_CONFIG tidak termuat sama sekali.</span> Cek apakah file <code>shared/shared-config.js</code> ada dan tidak error saat di-parse (buka DevTools Console).`;
+      return;
+    }
+    box.innerHTML = `
+      <div>sheetId (Master Data): <code>${esc(cfg.sheetId || "(kosong)")}</code></div>
+      <div>chartSourceSheetId (Sumber Chart): <code>${esc(cfg.chartSourceSheetId || "(kosong)")}</code></div>
+      <div>Tab kategoriPetugasKota: <code>${esc(cfg.tabs.kategoriPetugasKota)}</code></div>
+      <div>Tab heatmapKecKategori: <code>${esc(cfg.tabs.heatmapKecKategori)}</code></div>`;
+    if (!cfg.chartSourceSheetId) {
+      box.innerHTML += `<p class="fail">✗ chartSourceSheetId kosong — ini pasti penyebabnya, isi dulu di shared-config.js.</p>`;
+      return;
+    }
+  }
+
+  async function diagnoseTab(tabName, expectedKeyColumn, candidateColumns) {
+    const box = section(`Tab "${tabName}"`);
+    const url = `https://docs.google.com/spreadsheets/d/${cfg.chartSourceSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+    box.innerHTML += `<div>URL: <code>${esc(url)}</code></div>`;
+
+    let res, text;
+    try {
+      res = await fetch(url, { cache: "no-store" });
+    } catch (e) {
+      box.innerHTML += `<p class="fail">✗ fetch() gagal total (kemungkinan CORS / offline / URL salah): ${esc(e.message)}</p>`;
+      return;
+    }
+    box.innerHTML += `<div>HTTP status: <b class="${res.ok ? 'ok' : 'fail'}">${res.status}</b></div>`;
+    text = await res.text();
+
+    const isHtml = /^<!DOCTYPE html/i.test(text.trim());
+    if (isHtml) {
+      box.innerHTML += `
+        <p class="fail">✗ Respons berupa HTML, bukan CSV. Ini berarti SALAH SATU dari:</p>
+        <ul>
+          <li>Spreadsheet <code>${esc(cfg.chartSourceSheetId)}</code> belum di-share "Anyone with the link — Viewer" (paling sering), ATAU</li>
+          <li>Tab bernama persis <b>"${esc(tabName)}"</b> tidak ada di spreadsheet itu (cek typo/spasi/kapitalisasi).</li>
+        </ul>
+        <p><b>Cara cek cepat:</b> buka spreadsheet ini di browser dalam mode Incognito / logout dulu dari akun Google kamu:<br>
+        <code>https://docs.google.com/spreadsheets/d/${esc(cfg.chartSourceSheetId)}/edit</code><br>
+        Kalau di Incognito muncul "Request access" / minta login → itu penyebabnya, ganti sharing jadi "Anyone with the link".</p>
+        <details><summary>Lihat 300 karakter pertama respons HTML</summary><pre>${esc(text.slice(0, 300))}</pre></details>`;
+      return;
+    }
+
+    box.innerHTML += `<p class="ok">✓ Respons berupa CSV (bukan HTML) — tab ditemukan &amp; sheet bisa diakses publik.</p>`;
+
+    const rows = parseCSV(text);
+    box.innerHTML += `<div>Jumlah baris mentah terbaca: <b>${rows.length}</b></div>`;
+
+    // Tampilkan 6 baris pertama apa adanya, dengan nomor baris SESUAI Google Sheet
+    let tbl = `<table><tr><th class="rownum">#</th>${Array.from({length: Math.max(...rows.slice(0,6).map(r=>r.length), 1)}).map((_,i)=>`<th>Kol ${i+1}</th>`).join("")}</tr>`;
+    rows.slice(0, 6).forEach((r, idx) => {
+      const isGuessedHeader = (idx === 2); // baris ke-3 = index 2, sesuai asumsi headerRow:3 di kode
+      tbl += `<tr class="${isGuessedHeader ? 'headerguess' : ''}"><td class="rownum">${idx+1}</td>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`;
+    });
+    tbl += `</table>`;
+    box.innerHTML += `<p>6 baris pertama apa adanya (baris kuning = baris ke-3, yaitu baris yang DIASUMSIKAN sebagai header oleh kode saat ini):</p>${tbl}`;
+
+    // Coba cari baris mana yang sebenarnya cocok sebagai header (mengandung nama kolom kunci,
+    // termasuk kalau nama kolom itu cuma baris TERAKHIR dalam sel gabungan judul+header)
+    function lastLineOfCell(raw) {
+      const lines = String(raw === undefined || raw === null ? "" : raw).split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
+      return lines.length ? lines[lines.length - 1] : String(raw || "").trim();
+    }
+    let realHeaderRowIdx = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const matches = rows[i].some(c => {
+        const whole = String(c).trim().toLowerCase();
+        const last = lastLineOfCell(c).toLowerCase();
+        return candidateColumns.some(cand => cand.toLowerCase() === whole || cand.toLowerCase() === last);
+      });
+      if (matches) { realHeaderRowIdx = i; break; }
+    }
+
+    if (realHeaderRowIdx === -1) {
+      box.innerHTML += `<p class="fail">✗ Tidak ada baris (dari 10 baris pertama) yang mengandung salah satu nama kolom kandidat untuk "${esc(expectedKeyColumn)}": ${candidateColumns.map(c=>`<code>${esc(c)}</code>`).join(", ")}.
+      Kemungkinan nama header di sheet beda dari semua kandidat ini — cek manual nama kolom persis di tab tsb lalu sesuaikan daftar kandidat di <code>parseKategoriPetugasKota</code>/<code>parseHeatmapKecKategori</code> (shared-loader.js).</p>`;
+    } else {
+      const match = realHeaderRowIdx === 2 ? "cocok dengan asumsi kode (headerRow:3)" : `TIDAK cocok — kode mengasumsikan baris 3, tapi header sebenarnya di baris ${realHeaderRowIdx + 1}`;
+      const cls = realHeaderRowIdx === 2 ? "ok" : "fail";
+      box.innerHTML += `<p class="${cls}">${realHeaderRowIdx === 2 ? "✓" : "✗"} Baris header yang sebenarnya (mengandung kolom kunci): <b>baris ${realHeaderRowIdx + 1}</b> — ${match}.</p>`;
+    }
+  }
+
+  await diagnoseTab(cfg.tabs.kategoriPetugasKota, "Kategori", ["Kategori", "Kategori Petugas", "Jenis Petugas"]);
+  await diagnoseTab(cfg.tabs.heatmapKecKategori, "Kecamatan", ["Kecamatan", "Nama Kecamatan"]);
+
+  const summary = section("Ringkasan");
+  summary.innerHTML = `<p>Kalau kedua tab di atas menunjukkan <span class="ok">✓ CSV ditemukan</span> dan <span class="ok">✓ baris header cocok baris 3</span>, tapi dashboard aslinya <i>masih</i> demo — buka DevTools Console (F12) di halaman <code>report-kategori-petugas.html</code> dan cari log <code>[kategori-petugas] gagal memuat Google Sheet:</code>, pesan errornya akan persis menunjuk masalahnya.</p>`;
+})();
+</script>
+</body>
+</html>

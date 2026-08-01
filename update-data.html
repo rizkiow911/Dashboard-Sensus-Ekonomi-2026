@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Data — Dashboard SE2026 Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti halaman lain, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Halaman ini HANYA berfungsi dengan dataSource:"supabase" (lihat
+     shared-config.js) — sama seperti Report Petugas & Report Kecamatan. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Update Data — di luar sistem token bersama,
+     mengikuti pola halaman lain (style per-halaman, bukan global). */
+  main > * + * { margin-top: 32px !important; }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  .panel-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+  code.sql-block {
+    display: block; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6;
+    background: var(--ink); color: #E9E4D8; padding: 14px 16px; border-radius: var(--radius);
+    margin-top: 10px;
+  }
+  .step-list { margin: 10px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--ink-soft); line-height: 1.7; }
+  .step-list li { margin-bottom: 4px; }
+  .step-list strong { color: var(--ink); }
+</style>
+</head>
+<body data-page="update">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus3" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus3)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">SE2026 &middot; Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Update Data</h1>
+      <p class="hero-sub">Sejak migrasi ke Supabase, dashboard ini <strong>tidak lagi punya jalur unggah Excel dari halaman ini</strong> — data mentah diperbarui langsung di sisi Supabase. Halaman ini menampilkan kondisi data terkini dan riwayat update secara <strong>read-only</strong>.</p>
+    </div>
+  </section>
+
+  <!-- ==================== INFO: YANG BERUBAH ==================== -->
+  <section class="callout">
+    <strong>Yang berubah dari cara lama:</strong> menu ini dulu bernama "Upload Data Terbaru" — kamu unggah file Excel, dashboard memvalidasi kolomnya, lalu mengirimkannya ke Google Sheet lewat Apps Script (mode "replace" seluruh tab). Alur itu <strong>sudah tidak berlaku</strong> sejak sumber data pindah ke Supabase. Update data sekarang dilakukan langsung di Supabase — lewat <strong>Table Editor</strong> (impor CSV/manual), <strong>SQL Editor</strong>, atau script impor terpisah yang kamu jalankan sendiri (mis. dari FASIH-SM/Dashboard SE2026) — bukan lagi lewat dashboard ini.
+  </section>
+
+  <section class="callout warn" id="supabaseOffWarning" style="display:none;">
+    <strong>dataSource bukan "supabase".</strong> Halaman ini hanya membaca dari Supabase (tidak ada padanan di Google Sheets lama) — ganti <code>dataSource</code> di <code>shared/shared-config.js</code> menjadi <code>"supabase"</code> untuk mengaktifkan halaman ini.
+  </section>
+
+  <!-- ============================= RINGKASAN KONDISI DATA ============================= -->
+  <section aria-label="Ringkasan kondisi data saat ini">
+    <div class="panel-head-row">
+      <p class="section-label">Kondisi data saat ini &middot; dihitung langsung dari Supabase</p>
+      <span id="overviewStatus" class="status-pill pending">Memuat&hellip;</span>
+    </div>
+    <div class="kpi-strip reveal" id="overviewStrip"></div>
+  </section>
+
+  <!-- ============================= RIWAYAT UPDATE ============================= -->
+  <section class="panel">
+    <div class="panel-head-row">
+      <p class="step-label">Riwayat update data (tabel <code>data_sync_log</code>)</p>
+      <span id="logStatus" class="status-pill pending">Memuat&hellip;</span>
+    </div>
+    <p class="panel-desc" id="logDesc">Memuat riwayat update&hellip;</p>
+    <div class="table-scroll" id="logTableWrap"></div>
+  </section>
+
+  <!-- ============================= CARA MENCATAT UPDATE BARU ============================= -->
+  <section class="panel">
+    <p class="step-label">Cara mencatat update baru</p>
+    <p class="panel-desc">Setiap kali kamu selesai memperbarui data mentah di Supabase, jalankan query berikut di <strong>SQL Editor</strong> Supabase supaya tercatat di riwayat pada halaman ini:</p>
+    <ol class="step-list">
+      <li><strong>Perbarui data</strong> seperti biasa (Table Editor, impor CSV, atau script sinkron kamu).</li>
+      <li>Buka <strong>SQL Editor</strong> di dashboard Supabase project kamu.</li>
+      <li>Jalankan query ini, ganti nilai sesuai keadaan sebenarnya:</li>
+    </ol>
+    <code class="sql-block">insert into public.data_sync_log (table_name, source_label, row_count, status, note, synced_by)
+values ('sls_data', 'FASIH-SM &amp; Dashboard SE2026', 9700, 'success', 'Update rutin harian', 'Nama kamu');</code>
+    <p class="panel-desc" style="margin-top:12px;">Baris ini langsung muncul di riwayat pada refresh berikutnya (maks <span id="refreshSecLabel">45</span> detik). Kalau tabel <code>data_sync_log</code> belum ada sama sekali, jalankan dulu <code>sql/data_sync_log.sql</code> yang disertakan di paket file ini (sekali saja) — file itu juga berisi query INSERT contoh di atas.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  function fmt(n) { return (n === null || n === undefined) ? "—" : Number(n).toLocaleString("id-ID"); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  function renderOverview(counts) {
+    const cells = [
+      { value: fmt(counts.slsData), label: "Baris SLS (sls_data)" },
+      { value: fmt(counts.progresPpl), label: "Baris progres PPL" },
+      { value: fmt(counts.progresPml), label: "Baris progres PML" },
+      { value: fmt(counts.progresKelurahan), label: "Baris progres Kelurahan" },
+      { value: fmt(counts.kategoriPetugas), label: "Baris kategori petugas" }
+    ];
+    document.getElementById("overviewStrip").innerHTML = cells.map(c => `
+      <div class="kpi-cell">
+        <div class="kpi-value">${c.value}</div>
+        <div class="kpi-label">${c.label}</div>
+      </div>`).join("");
+  }
+
+  function statusPillClass(status) {
+    if (status === "success") return "ok";
+    if (status === "failed") return "err";
+    return "pending";
+  }
+
+  function renderLog(rows) {
+    const desc = document.getElementById("logDesc");
+    const wrap = document.getElementById("logTableWrap");
+    const statusEl = document.getElementById("logStatus");
+
+    if (!rows.length) {
+      statusEl.innerHTML = '<span class="dot warn"></span> Kosong';
+      statusEl.className = "status-pill pending";
+      desc.textContent = 'Tabel data_sync_log sudah ada tapi belum ada entri — catat update pertama lewat query di bagian "Cara mencatat update baru" di bawah.';
+      wrap.innerHTML = "";
+      return;
+    }
+
+    statusEl.textContent = rows.length.toLocaleString("id-ID") + " entri";
+    statusEl.className = "status-pill ok";
+    const latest = rows[0];
+    const latestTime = latest.synced_at ? new Date(latest.synced_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "—";
+    desc.textContent = `Update terakhir: ${latestTime} &middot; ${latest.table_name || "—"}`.replace(/&middot;/g, "\u00b7");
+
+    const headers = ["Waktu", "Tabel/Sumber", "Baris", "Status", "Catatan", "Oleh"];
+    let html = '<table class="data-table"><thead><tr>' + headers.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>";
+    rows.forEach(r => {
+      const waktu = r.synced_at ? new Date(r.synced_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "—";
+      const pill = `<span class="status-pill ${statusPillClass(r.status)}">${r.status || "—"}</span>`;
+      html += "<tr>" +
+        `<td>${waktu}</td>` +
+        `<td>${r.table_name || "—"}${r.source_label ? ` <span style="color:var(--ink-faint);">(${r.source_label})</span>` : ""}</td>` +
+        `<td>${r.row_count === null || r.row_count === undefined ? "—" : Number(r.row_count).toLocaleString("id-ID")}</td>` +
+        `<td>${pill}</td>` +
+        `<td title="${r.note || ""}">${r.note || "—"}</td>` +
+        `<td>${r.synced_by || "—"}</td>` +
+        "</tr>";
+    });
+    html += "</tbody></table>";
+    wrap.innerHTML = html;
+  }
+
+  function showLogError(err) {
+    const desc = document.getElementById("logDesc");
+    const wrap = document.getElementById("logTableWrap");
+    const statusEl = document.getElementById("logStatus");
+    statusEl.innerHTML = '<span class="dot"></span> Belum tersedia';
+    statusEl.className = "status-pill err";
+    const isMissingTable = /relation .*data_sync_log.* does not exist|42P01/i.test(err.message || "");
+    desc.innerHTML = isMissingTable
+      ? 'Tabel <code>data_sync_log</code> belum dibuat di Supabase. Jalankan <code>sql/data_sync_log.sql</code> (satu file, sekali jalan) di <strong>SQL Editor</strong> Supabase, lalu muat ulang halaman ini.'
+      : `Gagal membaca riwayat update: ${err.message}`;
+    wrap.innerHTML = "";
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG || {};
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+    document.getElementById("refreshSecLabel").textContent = cfg.refreshSeconds || 45;
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    if (cfg.dataSource !== "supabase") {
+      document.getElementById("supabaseOffWarning").style.display = "block";
+    }
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+      document.getElementById("supabaseOffWarning").style.display = "block";
+    }
+
+    async function syncOverview() {
+      const statusEl = document.getElementById("overviewStatus");
+      try {
+        const counts = await window.SupabaseEngine.fetchDataOverviewSupabase();
+        renderOverview(counts);
+        statusEl.textContent = "Diperbarui " + new Date().toLocaleTimeString("id-ID");
+        statusEl.className = "status-pill ok";
+        const footerSource = document.getElementById("footerSource");
+        if (footerSource) footerSource.textContent = "Supabase \u00b7 " + fmt(counts.slsData) + " baris sls_data terbaca";
+      } catch (err) {
+        console.error("[update-data] gagal menghitung ringkasan:", err.message);
+        statusEl.textContent = "Gagal memuat";
+        statusEl.className = "status-pill err";
+      }
+    }
+
+    async function syncLog() {
+      try {
+        const rows = await window.SupabaseEngine.fetchSyncLogSupabase(25);
+        renderLog(rows);
+      } catch (err) {
+        console.error("[update-data] gagal memuat riwayat:", err.message);
+        showLogError(err);
+      }
+    }
+
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || cfg.dataSource !== "supabase") {
+      document.getElementById("overviewStatus").textContent = "Tidak tersedia";
+      document.getElementById("overviewStatus").className = "status-pill err";
+      document.getElementById("logStatus").textContent = "Tidak tersedia";
+      document.getElementById("logStatus").className = "status-pill err";
+      document.getElementById("logDesc").textContent = 'Supabase belum tersambung — lihat peringatan di atas.';
+      return;
+    }
+
+    syncOverview();
+    syncLog();
+    setInterval(syncOverview, (cfg.refreshSeconds || 45) * 1000);
+    setInterval(syncLog, (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>
