@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report Kategori Petugas — SE2026 Kota Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti Halaman Utama, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="shared/chart.umd.js"></script>
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Report Kategori Petugas — di luar sistem token
+     bersama, mengikuti pola index.html (style per-halaman, bukan global). */
+  main > * + * { margin-top: 32px !important; }
+  .panel-row { align-items: stretch; }
+  .panel-row .panel { display: flex; flex-direction: column; }
+  .chart-wrap { position: relative; flex: 1; min-height: 280px; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* ---- kartu ringkasan 4 kategori petugas ---- */
+  .cat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 980px) { .cat-cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .cat-cards { grid-template-columns: 1fr; } }
+  .cat-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 18px 16px; transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .cat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(21,30,48,0.08); }
+  .cat-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .cat-card-name { font-family: var(--font-display); font-size: 17px; font-weight: 600; }
+  .cat-card-rank { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+  .cat-card-pct { font-family: var(--font-mono); font-size: 30px; font-weight: 500; color: var(--gold); margin-top: 6px; line-height: 1; }
+  .cat-card-pct .unit { font-size: 15px; color: var(--ink-faint); font-weight: 400; }
+  .cat-card-sub { font-size: 11.5px; color: var(--ink-soft); margin-top: 3px; }
+  .cat-card-bar-track { height: 5px; background: var(--line-soft); border-radius: 3px; margin-top: 12px; overflow: hidden; }
+  .cat-card-bar-fill { height: 100%; background: linear-gradient(90deg, var(--teal-soft), var(--teal)); border-radius: 3px; transition: width 0.8s cubic-bezier(.2,.8,.2,1); }
+  .cat-card-foot { display: flex; justify-content: space-between; margin-top: 12px; font-size: 11.5px; color: var(--ink-soft); }
+  .cat-card-foot .num { font-family: var(--font-mono); color: var(--ink); }
+
+  /* ---- heatmap kecamatan x kategori ---- */
+  .heatmap-scroll { overflow-x: auto; margin-top: 16px; }
+  .heatmap-grid { display: grid; grid-template-columns: 130px repeat(4, minmax(84px, 1fr)); gap: 3px; min-width: 560px; background: transparent; }
+  .hm-head, .hm-rowlabel, .hm-cell {
+    padding: 9px 10px; font-size: 12px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+  }
+  .hm-head { background: transparent; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); justify-content: center; padding-bottom: 6px; }
+  .hm-rowlabel { background: transparent; font-weight: 500; justify-content: flex-start; text-align: left; color: var(--ink-soft); padding-right: 14px; }
+  .hm-cell { font-family: var(--font-mono); font-weight: 500; color: var(--ink); cursor: default; border-radius: 5px; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  .hm-cell:not(.is-empty):hover { transform: scale(1.045); box-shadow: 0 3px 10px rgba(21,30,48,0.18); position: relative; z-index: 2; }
+  .hm-cell.is-empty { color: var(--ink-faint); font-family: var(--font-body); background: repeating-linear-gradient(135deg, var(--line-soft), var(--line-soft) 4px, transparent 4px, transparent 9px); border-radius: 5px; }
+  .hm-cell.is-extreme-low { box-shadow: inset 0 0 0 2px var(--alert); }
+  .hm-cell.is-extreme-high { box-shadow: inset 0 0 0 2px var(--teal); }
+
+  .heatmap-legend { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .heatmap-legend .scale { display: flex; height: 10px; width: 180px; border-radius: 5px; overflow: hidden; box-shadow: 0 1px 2px rgba(21,30,48,0.12); }
+  .heatmap-legend .scale span { flex: 1; }
+  .heatmap-legend .scale-label { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+
+  .combo-list { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
+  .combo-list li { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line-soft); gap: 10px; }
+  .combo-list li:first-child { border-top: none; }
+  .combo-list .combo-name { color: var(--ink); }
+  .combo-list .combo-name small { display: block; color: var(--ink-faint); font-size: 11px; margin-top: 1px; }
+  .combo-list .combo-pct { font-family: var(--font-mono); font-weight: 500; white-space: nowrap; }
+</style>
+</head>
+<body data-page="kategoriPetugas">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Report Kategori Petugas <span class="num">STIS &middot; Umum &middot; Saintek &middot; Afirmasi</span></h1>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Google Sheet belum terbaca — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KARTU KATEGORI ============================= -->
+  <section aria-label="Ringkasan per kategori petugas">
+    <p class="section-label">Ringkasan per kategori &middot; se-Kota Jakarta Timur</p>
+    <div class="cat-cards reveal" id="catCards"></div>
+  </section>
+
+  <!-- ============================= DUA CHART PERBANDINGAN ============================= -->
+  <section class="panel-row">
+    <div class="panel reveal">
+      <h2 class="panel-title">Distribusi beban tugas &amp; jumlah petugas</h2>
+      <p class="panel-desc">Total Assignment dan jumlah petugas pencacah per kategori, menunjukkan kategori UMUM sebagai penanggung beban terbesar.</p>
+      <div class="chart-wrap">
+        <canvas id="bebanChart" role="img" aria-label="Grafik distribusi beban tugas dan jumlah petugas per kategori"></canvas>
+      </div>
+    </div>
+    <div class="panel reveal">
+      <h2 class="panel-title">Tingkat penyelesaian &amp; approval</h2>
+      <p class="panel-desc">Persentase Selesai (Submitted+Approved+Rejected) dan Approved terhadap total beban, per kategori petugas.</p>
+      <div class="chart-wrap">
+        <canvas id="selesaiChart" role="img" aria-label="Grafik tingkat penyelesaian dan approval per kategori petugas"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= HEATMAP ============================= -->
+  <section class="panel reveal">
+    <h2 class="panel-title">Peta capaian kecamatan &times; kategori petugas</h2>
+    <p class="panel-desc" id="heatmapDesc">Tingkat penyelesaian (%) tiap kombinasi kecamatan dan kategori petugas. Sel bergaris-garis menandakan kategori tersebut tidak beroperasi di kecamatan itu.</p>
+    <div class="heatmap-scroll">
+      <div class="heatmap-grid" id="heatmapGrid"></div>
+    </div>
+    <div class="heatmap-legend">
+      <span class="scale-label">30%</span>
+      <span class="scale" id="heatmapScale"></span>
+      <span class="scale-label">80%</span>
+      <span class="scale-label" style="margin-left:14px;">&#9633; kategori tidak beroperasi di kecamatan tsb</span>
+    </div>
+    <div class="unknown-strip" id="heatmapNote" style="display:none;"></div>
+  </section>
+
+  <!-- ============================= PERINGKAT KOMBINASI ============================= -->
+  <section class="panel-row">
+    <div class="panel reveal">
+      <h2 class="panel-title">5 Kombinasi Tertinggi</h2>
+      <p class="panel-desc">Kombinasi kecamatan &times; kategori dengan tingkat penyelesaian tertinggi se-Kota Jakarta Timur.</p>
+      <ul class="combo-list" id="comboTop"></ul>
+    </div>
+    <div class="panel reveal">
+      <h2 class="panel-title">5 Kombinasi Terendah</h2>
+      <p class="panel-desc">Kandidat prioritas pembinaan PML pekan depan, sesuai catatan Bagian 7.2 laporan resmi.</p>
+      <ul class="combo-list" id="comboBottom"></ul>
+    </div>
+  </section>
+
+  <!-- ============================= TABEL RINGKASAN ============================= -->
+  <section class="panel reveal">
+    <h2 class="panel-title">Tabel ringkasan per kategori</h2>
+    <p class="panel-desc">Sumber: tab 06_Kategori_Petugas_Kota.</p>
+    <div class="table-scroll" id="catTableWrap"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  let bebanChartInstance = null;
+  let selesaiChartInstance = null;
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function fmt1(n) { return (Number(n) || 0).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  // ---- gradasi warna bermakna (terracotta -> gold -> teal), dipakai bersama
+  // oleh chart & heatmap supaya bahasa visualnya konsisten. Interpolasi
+  // dilakukan lewat ruang HSL (bukan RGB mentah) supaya transisi di bagian
+  // tengah tidak jadi "belang" coklat kusam — hasilnya gradasi yang lebih
+  // hidup dan enak dilihat, dengan saturasi yang dihaluskan di kedua ujung. ----
+  function hexToHsl(hex) {
+    const h = hex.replace("#", "");
+    const n = parseInt(h.length === 3 ? h.split("").map(c => c + c).join("") : h, 16);
+    let r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let hh = 0, s = 0, l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: hh = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: hh = (b - r) / d + 2; break;
+        case b: hh = (r - g) / d + 4; break;
+      }
+      hh *= 60;
+    }
+    return [hh, s, l];
+  }
+  function hslToCss(h, s, l) { return `hsl(${h.toFixed(1)}, ${(s * 100).toFixed(1)}%, ${(l * 100).toFixed(1)}%)`; }
+  function lerpHue(h1, h2, t) {
+    let d = h2 - h1;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    return (h1 + d * t + 360) % 360;
+  }
+  function lerpHsl(hex1, hex2, t) {
+    const [h1, s1, l1] = hexToHsl(hex1), [h2, s2, l2] = hexToHsl(hex2);
+    return hslToCss(lerpHue(h1, h2, t), s1 + (s2 - s1) * t, l1 + (l2 - l1) * t);
+  }
+  function rankColor(t, cAlert, cGold, cTeal) {
+    // sedikit "ease" di titik sambung supaya gold tidak terasa seperti garis
+    // batas tajam, dan sedikit menurunkan saturasi warna alert di ujung bawah
+    // supaya tidak terlalu "alarm" — tetap terbaca sebagai capaian rendah.
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    return e < 0.5 ? lerpHsl(cAlert, cGold, e * 2) : lerpHsl(cGold, cTeal, (e - 0.5) * 2);
+  }
+  // skala tetap 30%-80% (mengikuti legenda Gambar 7 pada laporan resmi),
+  // dijepit di kedua ujung supaya warna tetap bermakna walau ada outlier.
+  function heatColor(pct, cAlert, cGold, cTeal) {
+    const t = Math.max(0, Math.min(1, (pct - 30) / (80 - 30)));
+    return rankColor(t, cAlert, cGold, cTeal);
+  }
+  // gradient vertikal untuk isian bar chart — jauh lebih hidup dibanding warna
+  // flat, tanpa mengganti bahasa warna (gold tetap gold, teal tetap teal).
+  function lighten(hex, amount) {
+    const [h, s, l] = hexToHsl(hex);
+    return hslToCss(h, Math.max(0, s - amount * 0.15), Math.min(0.92, l + amount));
+  }
+  function barGradient(ctx, area, hexTop, hexBottom) {
+    if (!area) return hexTop;
+    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, hexTop);
+    g.addColorStop(1, hexBottom);
+    return g;
+  }
+
+  function renderCatCards(categories) {
+    const sorted = categories.slice().sort((a, b) => b.pctSelesai - a.pctSelesai);
+    const mount = document.getElementById("catCards");
+    mount.innerHTML = sorted.map((c, i) => {
+      const pct = Math.max(0, Math.min(100, c.pctSelesai));
+      return `
+        <div class="cat-card">
+          <div class="cat-card-head">
+            <span class="cat-card-name">${c.kategori}</span>
+            <span class="cat-card-rank">Peringkat ${i + 1}/${sorted.length}</span>
+          </div>
+          <div class="cat-card-pct">${fmt1(c.pctSelesai)}<span class="unit">% selesai</span></div>
+          <div class="cat-card-sub">${fmt1(c.pctApproved)}% approved</div>
+          <div class="cat-card-bar-track"><div class="cat-card-bar-fill" style="width:${pct}%;"></div></div>
+          <div class="cat-card-foot">
+            <span>Beban <span class="num">${fmt(c.totalBeban)}</span></span>
+            <span>Petugas <span class="num">${fmt(c.petugas)}</span></span>
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  function renderBebanChart(categories) {
+    const ctx = document.getElementById("bebanChart");
+    const cssGold = cssVar("--gold");
+    const cssTeal = cssVar("--teal");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+    const sorted = categories.slice().sort((a, b) => b.totalBeban - a.totalBeban);
+
+    if (bebanChartInstance) bebanChartInstance.destroy();
+    bebanChartInstance = new Chart(ctx, {
+      data: {
+        labels: sorted.map(c => c.kategori),
+        datasets: [
+          {
+            type: "bar", label: "Total Beban (Assignment)", data: sorted.map(c => c.totalBeban),
+            backgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssGold, 0.16), cssGold),
+            hoverBackgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssGold, 0.08), cssGold),
+            borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 }, borderSkipped: false,
+            barPercentage: 0.62, categoryPercentage: 0.62, yAxisID: "y"
+          },
+          {
+            type: "line", label: "Jumlah Petugas", data: sorted.map(c => c.petugas),
+            borderColor: cssTeal, backgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, `${cssTeal}33`, `${cssTeal}00`),
+            borderWidth: 2.5, tension: 0.35, fill: true, yAxisID: "y1",
+            pointRadius: 4, pointBackgroundColor: "#FBF8F2", pointBorderColor: cssTeal, pointBorderWidth: 2, pointHoverRadius: 6
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 800, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "circle", font: { family: "IBM Plex Sans", size: 11 }, color: cssInkSoft, padding: 16 } },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: true, boxPadding: 4
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, position: "left", grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8 } },
+          y1: { beginAtZero: true, position: "right", grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8 } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  function renderSelesaiChart(categories) {
+    const ctx = document.getElementById("selesaiChart");
+    const cssGold = cssVar("--gold");
+    const cssTeal = cssVar("--teal");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+    const sorted = categories.slice().sort((a, b) => b.pctSelesai - a.pctSelesai);
+
+    if (selesaiChartInstance) selesaiChartInstance.destroy();
+    selesaiChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: sorted.map(c => c.kategori),
+        datasets: [
+          {
+            label: "% Selesai", data: sorted.map(c => c.pctSelesai),
+            backgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssGold, 0.16), cssGold),
+            hoverBackgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssGold, 0.08), cssGold),
+            borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 }, borderSkipped: false
+          },
+          {
+            label: "% Approved", data: sorted.map(c => c.pctApproved),
+            backgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssTeal, 0.16), cssTeal),
+            hoverBackgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, lighten(cssTeal, 0.08), cssTeal),
+            borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 }, borderSkipped: false
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 800, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "circle", font: { family: "IBM Plex Sans", size: 11 }, color: cssInkSoft, padding: 16 } },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: true, boxPadding: 4,
+            callbacks: { label: (item) => `${item.dataset.label}: ${fmt1(item.parsed.y)}%` }
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, max: 100, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8, callback: (v) => v + "%" } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  function renderHeatmapScale() {
+    const cssAlert = cssVar("--alert"), cssGold = cssVar("--gold"), cssTeal = cssVar("--teal");
+    const steps = 32;
+    const html = Array.from({ length: steps }).map((_, i) => {
+      const c = heatColor(30 + (i / (steps - 1)) * 50, cssAlert, cssGold, cssTeal);
+      return `<span style="background:${c};"></span>`;
+    }).join("");
+    document.getElementById("heatmapScale").innerHTML = html;
+  }
+
+  function renderHeatmap(heatmap) {
+    const cssAlert = cssVar("--alert"), cssGold = cssVar("--gold"), cssTeal = cssVar("--teal");
+    const cats = heatmap.categories;
+    const mount = document.getElementById("heatmapGrid");
+
+    // cari sel ekstrem (tertinggi & terendah, sel kosong diabaikan) untuk
+    // ditandai outline — sama semangatnya dengan catatan "kombinasi wilayah
+    // -kategori dengan capaian terendah" pada laporan resmi Bagian 7.2.
+    let minVal = Infinity, maxVal = -Infinity;
+    heatmap.rows.forEach(r => cats.forEach(c => {
+      const v = r.cells[c];
+      if (v === null || v === undefined) return;
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+    }));
+
+    let html = `<div class="hm-head"></div>` + cats.map(c => `<div class="hm-head">${c}</div>`).join("");
+    heatmap.rows.forEach(r => {
+      html += `<div class="hm-rowlabel">${r.kecamatan}</div>`;
+      cats.forEach(c => {
+        const v = r.cells[c];
+        if (v === null || v === undefined) {
+          html += `<div class="hm-cell is-empty" title="${r.kecamatan} &middot; ${c}: tidak beroperasi">—</div>`;
+        } else {
+          const cls = ["hm-cell"];
+          if (v === minVal) cls.push("is-extreme-low");
+          if (v === maxVal) cls.push("is-extreme-high");
+          const bg = heatColor(v, cssAlert, cssGold, cssTeal);
+          const textColor = v >= 55 && v <= 100 ? "#151E30" : "#FBF8F2";
+          html += `<div class="${cls.join(" ")}" style="background:${bg}; color:${textColor};" title="${r.kecamatan} &middot; ${c}: ${fmt1(v)}%">${fmt1(v)}%</div>`;
+        }
+      });
+    });
+    mount.innerHTML = html;
+
+    const note = document.getElementById("heatmapNote");
+    if (isFinite(minVal) && isFinite(maxVal)) {
+      note.style.display = "flex";
+      note.innerHTML = `<span class="tag">Rentang skala</span>
+        <span>Capaian terendah <span class="num">${fmt1(minVal)}%</span> &middot; capaian tertinggi <span class="num">${fmt1(maxVal)}%</span> &middot; sel bergaris = kategori tidak beroperasi di kecamatan tsb.</span>`;
+    } else {
+      note.style.display = "none";
+    }
+  }
+
+  function flattenCombos(heatmap) {
+    const out = [];
+    heatmap.rows.forEach(r => heatmap.categories.forEach(c => {
+      const v = r.cells[c];
+      if (v === null || v === undefined) return;
+      out.push({ kecamatan: r.kecamatan, kategori: c, pct: v });
+    }));
+    return out;
+  }
+
+  function renderComboRanking(heatmap) {
+    const combos = flattenCombos(heatmap).sort((a, b) => b.pct - a.pct);
+    const top = combos.slice(0, 5);
+    const bottom = combos.slice(-5).reverse();
+    const line = (c) => `<li><span class="combo-name">${c.kecamatan}<small>${c.kategori}</small></span><span class="combo-pct">${fmt1(c.pct)}%</span></li>`;
+    document.getElementById("comboTop").innerHTML = top.map(line).join("");
+    document.getElementById("comboBottom").innerHTML = bottom.map(line).join("");
+  }
+
+  function renderCatTable(categories) {
+    const sorted = categories.slice().sort((a, b) => b.totalBeban - a.totalBeban);
+    const rowsHtml = sorted.map(c => `
+      <tr>
+        <td>${c.kategori}</td>
+        <td>${fmt(c.totalBeban)}</td>
+        <td>${fmt(c.petugas)}</td>
+        <td>${fmt1(c.pctSelesai)}%</td>
+        <td>${fmt1(c.pctApproved)}%</td>
+      </tr>`).join("");
+    document.getElementById("catTableWrap").innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Kategori</th><th>Total Beban</th><th>Petugas</th><th>% Selesai</th><th>% Approved</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function renderAll(categories, heatmap, sourceLabel, isDemo) {
+    renderCatCards(categories);
+    renderBebanChart(categories);
+    renderSelesaiChart(categories);
+    renderHeatmapScale();
+    renderHeatmap(heatmap);
+    renderComboRanking(heatmap);
+    renderCatTable(categories);
+
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+
+    const banner = document.getElementById("demoBanner");
+    banner.classList.toggle("is-visible", !!isDemo);
+  }
+
+  async function loadFromSheet() {
+    const cfg = window.APP_CONFIG;
+
+    if (cfg.dataSource === "supabase") {
+      // Tidak perlu lagi workbook kedua ("Sumber Data Chart") — kolom
+      // "Status" di sls_data sudah berisi kategori petugas, dihitung
+      // langsung lewat view v_kategori_petugas_kota & v_heatmap_kec_x_kategori.
+      const [categories, heatmap] = await Promise.all([
+        window.SupabaseEngine.fetchKategoriPetugasSupabase(),
+        window.SupabaseEngine.fetchHeatmapSupabase()
+      ]);
+      return { categories, heatmap };
+    }
+
+    // ---- perilaku lama, dipertahankan sebagai fallback/rollback ----
+    const eng = window.SheetEngine;
+    if (!cfg.chartSourceSheetId) throw new Error("chartSourceSheetId belum diisi di shared-config.js");
+    // Posisi baris header tidak diasumsikan tetap di baris ke-3 lagi (itu
+    // cuma tebakan awal, belum pernah diverifikasi langsung ke sheet — lihat
+    // catatan di shared-config.js). Sekarang dicari otomatis: baris pertama
+    // (dari 10 baris teratas) yang benar-benar memuat nama kolom kunci
+    // ("Kategori" / "Kecamatan"), supaya tetap kebaca walau jumlah baris
+    // judul/banner di atas tabel berubah.
+    const [catRaw, heatRaw] = await Promise.all([
+      eng.fetchTabRaw(cfg.chartSourceSheetId, cfg.tabs.kategoriPetugasKota),
+      eng.fetchTabRaw(cfg.chartSourceSheetId, cfg.tabs.heatmapKecKategori)
+    ]);
+    const catRows = eng.objectsWithAutoHeader(catRaw, cfg.tabs.kategoriPetugasKota, ["Kategori", "Kategori Petugas", "Jenis Petugas"]);
+    const heatRows = eng.objectsWithAutoHeader(heatRaw, cfg.tabs.heatmapKecKategori, ["Kecamatan", "Nama Kecamatan"]);
+    const categories = eng.parseKategoriPetugasKota(catRows);
+    const heatmap = eng.parseHeatmapKecKategori(heatRows);
+    return { categories, heatmap };
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.Chart) {
+      problems.unshift("Library Chart.js (shared/chart.umd.js) gagal dimuat — grafik tidak akan tampil.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[kategori-petugas] memakai data contoh —", reason);
+      document.getElementById("demoBannerText").textContent =
+        "Google Sheet belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.";
+      const fb = window.FALLBACK_DATA;
+      renderAll(fb.kategoriPetugasKota, fb.heatmapKecKategori, "Data contoh — Google Sheet belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — Sheet belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadFromSheet();
+        const snapshot = JSON.stringify(data.categories) + JSON.stringify(data.heatmap);
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const sourceLabel = window.APP_CONFIG.dataSource === "supabase"
+          ? `Supabase (v_kategori_petugas_kota &amp; v_heatmap_kec_x_kategori) &middot; ${data.categories.length} kategori, ${data.heatmap.rows.length} kecamatan terbaca`
+          : `Tab "06_Kategori_Petugas_Kota" &amp; "07_Heatmap_Selesai_KecxKategori" &middot; ${data.categories.length} kategori, ${data.heatmap.rows.length} kecamatan terbaca`;
+        renderAll(data.categories, data.heatmap, sourceLabel, false);
+        window.setSyncBadge("Diperbarui &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[kategori-petugas] gagal memuat data:", err.message);
+        if (window.APP_CONFIG.dataSource !== "supabase") {
+          console.info("[kategori-petugas] cek: (1) spreadsheet chartSourceSheetId sudah di-share 'Anyone with the link'? (2) nama tab persis sama? (3) buka debug-kategori-petugas.html untuk diagnosis rinci.");
+        }
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.chartSourceSheetId) {
+      useFallback("shared-config.js belum diisi");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>
