@@ -1,0 +1,1664 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report Usaha Besar — SE2026 Kota Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti halaman lain, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="shared/chart.umd.js"></script>
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Dipakai tombol "Export ke Excel" di halaman ini. -->
+<script src="shared/xlsx.full.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Report Usaha Besar — di luar sistem token bersama,
+     mengikuti pola halaman lain (style per-halaman, bukan global).
+     Sengaja dibuat semirip mungkin dengan report-petugas.html &
+     report-kategori-petugas.html supaya terasa satu keluarga dashboard. */
+  main > * + * { margin-top: 32px !important; }
+
+  :root {
+    /* Warna tambahan khusus 6 status asal alokasi UB — di luar token
+       bersama (--gold/--teal/--alert) karena Bagian 2 butuh 6 warna
+       berbeda untuk stacked bar & tabel pivot. Nuansanya tetap mengikuti
+       palet hangat dashboard (bukan warna cerah lepas konteks). */
+    --status-bps:    #C1852B; /* = --gold, alokasi internal BPS Jaktim */
+    --status-jiep:   #2C7A68; /* = --teal */
+    --status-stis:   #6B4FA0;
+    --status-rutinan:#3E7CB1;
+    --status-kantor: #BC4B2C; /* = --alert */
+    --status-ri:     #8791A0; /* = --ink-faint */
+    --status-provinsi: #A2683C;
+  }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .section-head .section-num {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 2px 9px; white-space: nowrap;
+  }
+
+  .threshold-note {
+    display: flex; align-items: center; gap: 10px; margin-top: 14px;
+    padding: 10px 14px; border: 1px dashed var(--alert); border-radius: var(--radius);
+    background: var(--alert-soft); font-size: 12.5px; color: var(--ink); flex-wrap: wrap;
+  }
+  .threshold-note .tag {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--alert); border: 1px solid var(--alert); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+
+  /* ---- toolbar umum: tab + pencarian + toggle + export ---- */
+  .toolbar { display: flex; flex-direction: column; gap: 14px; }
+  .pill-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill-tab {
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+    cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
+  }
+  .pill-tab:hover { border-color: var(--ink-soft); color: var(--ink); }
+  .pill-tab.is-active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .pill-tab .n { opacity: 0.7; margin-left: 5px; }
+  #kategoriTabs .pill-tab.is-active { background: var(--status-jiep); border-color: var(--status-jiep); }
+
+  .toolbar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+  .toolbar-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .search-field { position: relative; }
+  .search-field input {
+    font-family: var(--font-body); font-size: 13.5px; padding: 9px 12px; width: 220px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+  }
+  .search-field input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .select-field select {
+    font-family: var(--font-mono); font-size: 12.5px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+    cursor: pointer;
+  }
+  .toggle-field { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+  .toggle-field input { accent-color: var(--alert); width: 15px; height: 15px; cursor: pointer; }
+  .export-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn.small { padding: 8px 14px; font-size: 12.5px; }
+
+  .panel-row { align-items: stretch; }
+  .panel-row .panel { display: flex; flex-direction: column; }
+  .chart-wrap { position: relative; flex: 1; min-height: 300px; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+
+  /* ---- fallback saat data tren baru 1 hari (line chart 1 titik = tidak
+     informatif) — tampilkan angka besar + konteks, bukan kanvas kosong. ---- */
+  .single-stat { position: absolute; inset: 0; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; padding: 8px 4px; }
+  .single-stat-num { font-family: var(--font-mono); font-size: 52px; font-weight: 500; line-height: 1; color: var(--ink); }
+  .single-stat-num.below { color: var(--alert); }
+  .single-stat-col { display: flex; flex-direction: column; gap: 4px; }
+  .single-stat-label { font-size: 12.5px; color: var(--ink-soft); max-width: 320px; line-height: 1.5; }
+  .single-stat-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 4px; }
+  .single-stat-bar-wrap { flex: 1; min-width: 180px; }
+  .single-stat-bar-track { height: 10px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
+  .single-stat-bar-fill { height: 100%; border-radius: 999px; background: var(--teal); }
+  .single-stat-bar-fill.below { background: var(--alert); }
+  .single-stat-bar-ticks { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); margin-top: 5px; }
+
+  .role-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .role-count { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+  .role-count .bad { color: var(--alert); font-weight: 500; }
+
+  table.ub-table td.num, table.ub-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.ub-table td.pct, table.ub-table th.pct { text-align: right; font-family: var(--font-mono); font-weight: 500; }
+  table.ub-table tr.row-below td { background: var(--alert-soft); }
+  table.ub-table tr.row-below td.pct.main { color: var(--alert); }
+  table.ub-table tr.row-total td { background: var(--gold-soft); font-weight: 600; }
+  table.ub-table td.name-cell { font-weight: 500; max-width: 200px; }
+  table.ub-table td, table.ub-table th { max-width: none; }
+  table.ub-table td.zero { color: var(--ink-faint); }
+
+  .empty-note { padding: 22px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+
+  /* ---- kartu delta harian per petugas (Bagian 1) ---- */
+  .petugas-cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .petugas-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 13px 15px 12px; transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .petugas-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(21,30,48,0.08); }
+  .petugas-card.is-below { background: var(--alert-soft); }
+  .petugas-card-name { font-family: var(--font-body); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .petugas-card-pml { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); margin-top: 1px; }
+  .petugas-card-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 9px; }
+  .petugas-card-pct { font-family: var(--font-mono); font-size: 22px; font-weight: 500; color: var(--ink); }
+  .petugas-card-delta { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .petugas-card-delta.up { color: var(--teal); background: color-mix(in srgb, var(--teal) 14%, transparent); }
+  .petugas-card-delta.down { color: var(--alert); background: var(--alert-soft); }
+  .petugas-card-delta.flat { color: var(--ink-faint); background: var(--paper); }
+  .petugas-card-sub { font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
+
+  /* ---- kartu ringkasan status (Bagian 2) ---- */
+  .status-cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
+  @media (max-width: 1080px) { .status-cards { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 620px) { .status-cards { grid-template-columns: repeat(2, 1fr); } }
+  .status-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 15px 13px; transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .status-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(21,30,48,0.08); }
+  .status-card-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .status-card-name { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--ink-soft); }
+  .status-card-value { font-family: var(--font-mono); font-size: 22px; font-weight: 500; margin-top: 6px; color: var(--ink); }
+  .status-card-sub { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+</style>
+</head>
+<body data-page="usahaBesar">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus4" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus4)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Report Usaha Besar <span class="num">Progres Pendataan UB &middot; Semua Asal Alokasi</span></h1>
+      <p class="hero-sub">Progres pendataan Usaha Besar (UB) se-Kota Jakarta Timur — progres harian petugas internal BPS Jaktim, sebaran per kecamatan &amp; asal alokasi (JIEP/STIS/Rutinan/dll), dan rincian hasil pendataan tiap petugas. Dihitung otomatis dari Supabase setiap sesi.</p>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Supabase belum terbaca — angka di bawah ini adalah data contoh, bukan data UB SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KPI STRIP ============================= -->
+  <section aria-label="Ringkasan Usaha Besar se-Kota Jakarta Timur">
+    <p class="section-label">Ringkasan &middot; se-Kota Jakarta Timur</p>
+    <div class="kpi-strip reveal" id="kpiStrip"></div>
+    <div class="threshold-note" style="border-color:var(--line); background:var(--paper); margin-top:14px;">
+      <span class="tag" style="color:var(--ink-soft); border-color:var(--ink-soft);">Cakupan Data</span>
+      <span><strong>Bagian 1</strong> menampilkan progres tiap PPL/PML internal BPS Jaktim, mencakup <strong>kedua kategori pegawai</strong> (JIEP &amp; Non-JIEP) — gunakan tab Kategori Pegawai untuk melihatnya terpisah, atau "Semua Kategori" untuk gabungan per orang. KPI ini &amp; <strong>Bagian 2/3</strong> mencakup UB dari <strong>semua asal alokasi &amp; semua pihak pendata</strong> (termasuk STIS, Data Kantor Pusat, RI, dll — bukan cuma pegawai internal BPS Jaktim, karena status='STIS'/'Data Kantor Pusat' tidak punya petugas internal). Karena itu totalnya wajar lebih besar dari total Bagian 1; ini cakupan yang berbeda, bukan selisih data.</span>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       BAGIAN 1 — PROGRES PEGAWAI HARIAN
+       ============================================================ -->
+  <section aria-label="Bagian 1 — Progres Pegawai Harian">
+    <div class="section-head">
+      <p class="section-label" style="margin-bottom:0;">Bagian 1 &middot; Progres Pegawai Harian</p>
+      <span class="section-num">Internal BPS Jakarta Timur</span>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <p class="panel-desc" style="margin-top:0;">Progres pendataan tiap PPL &amp; PML internal BPS Jaktim — mencakup <strong>KEDUA kategori pegawai</strong> (JIEP maupun Non-JIEP), digabung otomatis per petugas dari <strong>seluruh asal alokasi UB yang mereka datangi</strong>, karena semua nama yang tampil di sini adalah pegawai internal BPS Jaktim; asal alokasi UB hanya menjelaskan darimana bisnisnya berasal, bukan status kepegawaian petugasnya. Gunakan tab <strong>Kategori Pegawai</strong> di bawah untuk melihat JIEP &amp; Non-JIEP secara terpisah.</p>
+    <div class="threshold-note">
+      <span class="tag">Perlu Perhatian</span>
+      <span>Petugas dengan <strong id="thresholdLabelPegawai">% Progres Pendataan hari terpilih di bawah 50%</strong> ditandai pada tabel &amp; file Excel di bawah. % Progres Pendataan mencakup SEMUA kode hasil (submit, drop, tidak ditemukan, double, menolak, pindah, minta cawi, data dari KKD RI, dokumen masuk) — bukan submit saja; hanya baris yang benar-benar belum diproses yang dianggap belum progres.</span>
+    </div>
+    <div class="toolbar" style="margin-top:20px;">
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih Kategori Pegawai</p>
+        <div class="pill-tabs" id="kategoriTabs"></div>
+      </div>
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih PML</p>
+        <div class="pill-tabs" id="pmlTabs"></div>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="select-field">
+            <select id="dateSelect" aria-label="Pilih tanggal snapshot"></select>
+          </div>
+          <div class="search-field">
+            <input type="text" id="searchPegawaiInput" placeholder="Cari nama petugas&hellip;" autocomplete="off">
+          </div>
+          <label class="toggle-field">
+            <input type="checkbox" id="onlyBelowPegawaiToggle">
+            Hanya tampilkan % Progres Pendataan &lt; 50%
+          </label>
+        </div>
+        <div class="export-group">
+          <button class="btn small" id="btnExportPegawai">Export Progres Harian (Excel)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <h2 class="panel-title" id="pegawaiChartTitle">Tren Progres &middot; se-Kota Jakarta Timur</h2>
+    <p class="panel-desc" id="pegawaiChartDesc">Total alokasi &amp; % submit gabungan seluruh petugas internal BPS Jaktim, dari hari ke hari.</p>
+    <div class="chart-wrap" style="min-height:280px;">
+      <canvas id="pegawaiTrendChart" role="img" aria-label="Grafik tren rata-rata progres pegawai harian"></canvas>
+      <div id="pegawaiChartSingleStat" style="display:none;"></div>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Kartu Progres Harian per Petugas</h2>
+        <p class="panel-desc" id="pegawaiCardsDesc">Perubahan % progres pendataan tiap petugas dibanding tanggal upload data sebelumnya.</p>
+      </div>
+      <span class="role-count" id="pegawaiCardsCount"></span>
+    </div>
+    <div class="petugas-cards-grid" id="pegawaiCardsGrid" style="margin-top:14px;"></div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Ringkasan per Petugas</h2>
+        <p class="panel-desc" id="pegawaiPanelDesc">Progres pendataan per petugas pada tanggal terpilih.</p>
+      </div>
+      <span class="role-count" id="pegawaiCount"></span>
+    </div>
+    <div class="table-scroll" id="pegawaiTableWrap" style="max-height:520px;"></div>
+  </section>
+
+  <!-- ============================================================
+       BAGIAN 2 — PROGRES PER KATEGORI x KECAMATAN
+       ============================================================ -->
+  <section aria-label="Bagian 2 — Progres per Kategori menurut Kecamatan">
+    <div class="section-head">
+      <p class="section-label" style="margin-bottom:0;">Bagian 2 &middot; Progres UB per Kategori menurut Kecamatan</p>
+      <span class="section-num">Semua Asal Alokasi</span>
+    </div>
+  </section>
+
+  <section aria-label="Ringkasan per status asal alokasi">
+    <div class="status-cards reveal" id="statusCards"></div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title" id="kecChartTitle">Progres Pendataan UB per Kecamatan</h2>
+        <p class="panel-desc" id="kecChartDesc">% Usaha Besar yang sudah diproses (semua kode hasil, bukan submit saja) dari total UB di tiap kecamatan, semua asal alokasi digabung. Diurutkan dari yang paling perlu perhatian.</p>
+      </div>
+      <div class="pill-tabs" id="kecChartModeTabs"></div>
+    </div>
+    <div class="chart-wrap" style="min-height:380px; margin-top:14px;">
+      <canvas id="kecamatanStatusChart" role="img" aria-label="Grafik sebaran/progres UB per kecamatan"></canvas>
+    </div>
+    <p class="single-stat-note" id="kecChartFallbackNote" style="display:none; margin-top:12px;"></p>
+  </section>
+
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Tabel Detail per Kecamatan</h2>
+        <p class="panel-desc">Sumber: v_progres_kategori_kecamatan. Kolom Selesai/Belum/% Selesai muncul otomatis setelah view Supabase diperbarui (lihat sql/fix-report-usaha-besar-3agu2026.sql).</p>
+      </div>
+      <div class="export-group">
+        <button class="btn secondary small" id="btnExportKecStatus">Export ke Excel</button>
+      </div>
+    </div>
+    <div class="table-scroll" id="kecStatusTableWrap" style="max-height:480px; margin-top:14px;"></div>
+  </section>
+
+  <!-- ============================================================
+       BAGIAN 3 — DETAIL PROGRES MENURUT HASIL PENDATAAN
+       ============================================================ -->
+  <section aria-label="Bagian 3 — Detail Progres Pegawai menurut Hasil Pendataan">
+    <div class="section-head">
+      <p class="section-label" style="margin-bottom:0;">Bagian 3 &middot; Detail Progres Pegawai menurut Hasil Pendataan</p>
+      <span class="section-num">Matrix Petugas &times; Hasil</span>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <p class="panel-desc" style="margin-top:0;">Rincian per petugas: dari total alokasinya, berapa yang DROP, TIDAK DITEMUKAN, DOUBLE, MENOLAK, PINDAH, MINTA CAWI, DATA DARI KKD RI, DOKUMEN MASUK, SUBMIT, dan berapa yang masih Belum Diproses (kondisi terkini, semua asal alokasi).</p>
+    <div class="toolbar" style="margin-top:16px;">
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="search-field">
+            <input type="text" id="searchDetailInput" placeholder="Cari nama petugas&hellip;" autocomplete="off">
+          </div>
+          <div class="select-field">
+            <select id="sortDetailSelect" aria-label="Urutkan tabel">
+              <option value="pctAsc">Urutkan: % Progres Pendataan terendah dulu</option>
+              <option value="belumDesc">Urutkan: Belum Diproses terbanyak dulu</option>
+              <option value="nameAsc">Urutkan: Nama petugas (A-Z)</option>
+            </select>
+          </div>
+        </div>
+        <div class="export-group">
+          <button class="btn small" id="btnExportDetail">Export Detail Hasil (Excel)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Matrix Petugas &times; Hasil Pendataan</h2>
+        <p class="panel-desc" id="detailPanelDesc">Sumber: v_detail_hasil_pendataan + hitungan Belum Diproses dari ub_se2026_bps3172.</p>
+      </div>
+      <span class="role-count" id="detailCount"></span>
+    </div>
+    <div class="table-scroll" id="detailTableWrap" style="max-height:560px;"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  // Ambang % submit untuk badge "Perlu Perhatian" pada Bagian 1. Ganti
+  // angka ini saja kalau ambangnya berubah — dipakai di tabel & Excel.
+  const THRESHOLD_PCT = 50;
+
+  // Urutan & label tetap kode ref_ket_hasil (1-9) — lihat catatan di
+  // shared-config.js. SESUAIKAN di sini kalau kode/deskripsinya berubah.
+  const KET_HASIL_ORDER = [
+    { code: 1, label: "DROP" },
+    { code: 2, label: "TIDAK DITEMUKAN" },
+    { code: 3, label: "DOUBLE" },
+    { code: 4, label: "MENOLAK" },
+    { code: 5, label: "PINDAH" },
+    { code: 6, label: "MINTA CAWI" },
+    { code: 7, label: "DATA DARI KKD RI" },
+    { code: 8, label: "DOKUMEN MASUK" },
+    { code: 9, label: "SUBMIT" }
+  ];
+  const SUBMIT_CODE = 9;
+
+  // Warna per status asal alokasi (lihat token --status-* di <style>) —
+  // HANYA dipakai sebagai petunjuk warna, BUKAN untuk menentukan urutan
+  // kolom/baris. Urutan kolom Bagian 2 (tabel & chart) mengikuti abjad
+  // nama status secara otomatis (persis seperti pivot Excel sumbernya —
+  // lihat statusListPresent()), supaya status baru yang belum terdaftar
+  // di sini (mis. "PROVINSI") tetap otomatis muncul di posisi yang benar,
+  // tidak diam-diam terlempar ke ujung tabel seperti sebelumnya. Status
+  // yang belum punya warna tetap di sini akan dapat warna bergilir dari
+  // LINE_PALETTE (lihat statusColor()).
+  const STATUS_COLOR_VAR = {
+    "BPS Jakarta Timur": "--status-bps",
+    "JIEP": "--status-jiep",
+    "STIS": "--status-stis",
+    "Rutinan": "--status-rutinan",
+    "Data Kantor Pusat": "--status-kantor",
+    "RI": "--status-ri",
+    "PROVINSI": "--status-provinsi"
+  };
+
+  let state = {
+    pegawai: [],          // seluruh baris v_progres_pegawai_harian (mapped)
+    dates: [],             // tanggal_snapshot unik, terurut naik
+    activeDate: null,
+    pmlList: [],           // ["Semua PML", ...]
+    activePml: "Semua PML",
+    kategoriList: [],       // ["Semua Kategori", "Non JIEP", "JIEP", ...]
+    activeKategori: "Semua Kategori",
+    searchPegawai: "",
+    onlyBelowPegawai: false,
+
+    kecStatus: [],          // seluruh baris v_progres_kategori_kecamatan (mapped)
+    kecChartMode: "progres", // "progres" (% selesai per kecamatan) | "total" (stacked per status, tampilan lama)
+
+    detailRows: [],         // hasil gabungan Bagian 3 per petugas (sudah dipivot)
+    searchDetail: "",
+    sortDetail: "pctAsc"
+  };
+
+  let pegawaiChartInstance = null;
+  let kecStatusChartInstance = null;
+
+  // % Progres Pendataan sebenarnya untuk satu baris pegawai (Bagian 1):
+  // sudahDiproses mencakup SEMUA kode hasil (submit, drop, tidak
+  // ditemukan, double, menolak, pindah, minta cawi, data dari KKD RI,
+  // dokumen masuk) — bukan submit saja. Hanya yang benar-benar belum
+  // diproses (ket_hasil IS NULL) yang dianggap belum progres. Dipakai di
+  // tabel, chart, threshold "Perlu Perhatian", pengurutan, & Excel —
+  // menggantikan r.persenSubmit (yang cuma submit/total) sebagai metrik
+  // utama Bagian 1.
+  function progresPct(r) {
+    return r.totalAlokasi ? (r.sudahDiproses / r.totalAlokasi) * 100 : 0;
+  }
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function fmt1(n) { return (Number(n) || 0).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  // ---- gradasi HSL, dipakai bar chart supaya tidak terasa flat — sama
+  // pola yang dipakai report-kategori-petugas.html. ----
+  function hexToHsl(hex) {
+    const h = hex.replace("#", "");
+    const n = parseInt(h.length === 3 ? h.split("").map(c => c + c).join("") : h, 16);
+    let r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let hh = 0, s = 0, l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: hh = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: hh = (b - r) / d + 2; break;
+        case b: hh = (r - g) / d + 4; break;
+      }
+      hh *= 60;
+    }
+    return [hh, s, l];
+  }
+  function hslToCss(h, s, l) { return `hsl(${h.toFixed(1)}, ${(s * 100).toFixed(1)}%, ${(l * 100).toFixed(1)}%)`; }
+  function lighten(hex, amount) {
+    const [h, s, l] = hexToHsl(hex);
+    return hslToCss(h, Math.max(0, s - amount * 0.15), Math.min(0.92, l + amount));
+  }
+  function barGradient(ctx, area, hexTop, hexBottom) {
+    if (!area) return hexTop;
+    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, hexTop);
+    g.addColorStop(1, hexBottom);
+    return g;
+  }
+
+  // statusIndex opsional: dipakai untuk status yang belum terdaftar di
+  // STATUS_COLOR_VAR (mis. status baru selain 7 yang sudah dikenal),
+  // supaya tetap dapat warna yang jelas & konsisten (dari LINE_PALETTE
+  // berdasarkan posisinya di daftar status yang tampil) alih-alih abu-abu
+  // datar untuk semua status yang tidak dikenal.
+  function statusColor(status, statusIndex) {
+    const varName = STATUS_COLOR_VAR[status];
+    if (varName) return cssVar(varName);
+    if (typeof statusIndex === "number") return lineColor(statusIndex);
+    return cssVar("--ink-faint");
+  }
+
+  // Palet berputar untuk garis per-petugas (Bagian 1, mode "1 PML aktif")
+  // — jumlah petugas per PML tidak tetap, jadi warnanya diputar dari
+  // sekumpulan hue tetap supaya tetap konsisten & mudah dibedakan. Juga
+  // dipakai statusColor() di atas sebagai fallback untuk status baru.
+  const LINE_PALETTE = ["--gold", "--teal", "--status-stis", "--status-rutinan", "--alert", "--status-ri"];
+  function lineColor(i) { return cssVar(LINE_PALETTE[i % LINE_PALETTE.length]); }
+
+  // =====================================================================
+  // KPI STRIP (ringkasan se-kota, tidak terpengaruh filter tab manapun)
+  // =====================================================================
+  function renderKpiStrip() {
+    const detail = state.detailRows;
+    const totalUB = detail.reduce((s, r) => s + r.total, 0);
+    const totalSubmit = detail.reduce((s, r) => s + (r.counts[SUBMIT_CODE] || 0), 0);
+    const totalBelum = detail.reduce((s, r) => s + r.belum, 0);
+    const pctSubmit = totalUB ? (totalSubmit / totalUB) * 100 : 0;
+    const pctProgres = totalUB ? ((totalUB - totalBelum) / totalUB) * 100 : 0;
+
+    const byStatus = {};
+    state.kecStatus.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + r.jumlah; });
+
+    const latestDate = state.dates.length ? state.dates[state.dates.length - 1] : null;
+    const latestRows = state.pegawai.filter(r => r.tanggalSnapshot === latestDate);
+    const petugasAktif = new Set(latestRows.map(r => r.petugas)).size;
+    const petugasJiep = new Set(latestRows.filter(r => r.kategoriPetugas === "JIEP").map(r => r.petugas)).size;
+    const petugasNonJiep = new Set(latestRows.filter(r => r.kategoriPetugas === "Non JIEP").map(r => r.petugas)).size;
+
+    const cells = [
+      { value: fmt(totalUB), label: "Total UB terdata (semua status)" },
+      { value: fmt(totalSubmit), label: "Total Submit (kode 9)" },
+      { value: fmt1(pctSubmit) + "%", label: "% Submit keseluruhan" },
+      { value: fmt1(pctProgres) + "%", label: "% Progres Pendataan keseluruhan", accentClass: "accent" },
+      { value: fmt(totalBelum), label: "Belum Diproses (kondisi terkini)", accentClass: totalBelum ? "alert" : "" },
+      { value: fmt(byStatus["BPS Jakarta Timur"] || 0), label: "UB — BPS Jakarta Timur" },
+      { value: fmt(byStatus["JIEP"] || 0), label: "UB — JIEP" },
+      { value: fmt(byStatus["STIS"] || 0), label: "UB — STIS" },
+      { value: fmt(petugasAktif), label: "Petugas internal aktif (tgl terakhir)" },
+      { value: fmt(petugasNonJiep), label: "— dari itu kategori Non JIEP" },
+      { value: fmt(petugasJiep), label: "— dari itu kategori JIEP" }
+    ];
+    document.getElementById("kpiStrip").innerHTML = cells.map(c => `
+      <div class="kpi-cell">
+        <div class="kpi-value ${c.accentClass || ""}">${c.value}</div>
+        <div class="kpi-label">${c.label}</div>
+      </div>`).join("");
+  }
+
+  // =====================================================================
+  // BAGIAN 1 — PROGRES PEGAWAI HARIAN
+  // =====================================================================
+  function buildPmlList(rows) {
+    const set = new Set();
+    rows.forEach(r => r.pml && set.add(r.pml));
+    return ["Semua PML", ...Array.from(set).sort((a, b) => a.localeCompare(b, "id"))];
+  }
+
+  // Urutan tetap Non JIEP dulu baru JIEP (mengikuti urutan yang biasa
+  // dipakai di laporan), status lain (mis. "Campuran") ditaruh setelahnya
+  // secara abjad supaya tidak diam-diam hilang kalau muncul.
+  function buildKategoriList(rows) {
+    const set = new Set();
+    rows.forEach(r => r.kategoriPetugas && set.add(r.kategoriPetugas));
+    const fixedOrder = ["Non JIEP", "JIEP"];
+    const known = fixedOrder.filter(k => set.has(k));
+    const rest = Array.from(set).filter(k => fixedOrder.indexOf(k) === -1).sort((a, b) => a.localeCompare(b, "id"));
+    return ["Semua Kategori", ...known, ...rest];
+  }
+
+  // PML & Kategori Pegawai saling memfilter (cascading): tab PML hanya
+  // menghitung dalam kategori yang aktif, dan sebaliknya — supaya
+  // pimpinan bisa mengombinasikan keduanya (mis. "PML Fajar, kategori
+  // JIEP saja") tanpa angka di tab jadi menyesatkan.
+  function renderPmlTabs() {
+    const mount = document.getElementById("pmlTabs");
+    const kategoriFilter = (r) => state.activeKategori === "Semua Kategori" || r.kategoriPetugas === state.activeKategori;
+    const baseRows = state.pegawai.filter(kategoriFilter);
+    const todayRows = baseRows.filter(r => r.tanggalSnapshot === state.activeDate);
+    mount.innerHTML = state.pmlList.map(p => {
+      const isAll = p === "Semua PML";
+      const count = isAll
+        ? new Set(baseRows.map(r => r.petugas)).size
+        : new Set(baseRows.filter(r => r.pml === p).map(r => r.petugas)).size;
+      // Rata-rata progres = rata-rata sederhana dari % progres tiap
+      // petugas pada tanggal aktif (bukan sum/sum) — sama definisi yang
+      // dipakai chart & kartu petugas.
+      const rowsForAvg = isAll ? todayRows : todayRows.filter(r => r.pml === p);
+      const avgPct = rowsForAvg.length ? rowsForAvg.reduce((s, r) => s + progresPct(r), 0) / rowsForAvg.length : null;
+      const cls = ["pill-tab"];
+      if (p === state.activePml) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-pml="${encodeURIComponent(p)}">${p}<span class="n">${count}</span>${avgPct === null ? "" : `<span class="n">&middot; ${fmt1(avgPct)}%</span>`}</button>`;
+    }).join("");
+    mount.querySelectorAll(".pill-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activePml = decodeURIComponent(btn.getAttribute("data-pml"));
+        renderPmlTabs();
+        renderKategoriTabs();
+        renderPegawaiChart();
+        renderPegawaiCards();
+        renderPegawaiTable();
+      });
+    });
+  }
+
+  function renderKategoriTabs() {
+    const mount = document.getElementById("kategoriTabs");
+    if (!mount) return;
+    const pmlFilter = (r) => state.activePml === "Semua PML" || r.pml === state.activePml;
+    const baseRows = state.pegawai.filter(pmlFilter);
+    const todayRows = baseRows.filter(r => r.tanggalSnapshot === state.activeDate);
+    mount.innerHTML = state.kategoriList.map(k => {
+      const isAll = k === "Semua Kategori";
+      const count = isAll
+        ? new Set(baseRows.map(r => r.petugas)).size
+        : new Set(baseRows.filter(r => r.kategoriPetugas === k).map(r => r.petugas)).size;
+      const rowsForAvg = isAll ? todayRows : todayRows.filter(r => r.kategoriPetugas === k);
+      const avgPct = rowsForAvg.length ? rowsForAvg.reduce((s, r) => s + progresPct(r), 0) / rowsForAvg.length : null;
+      const cls = ["pill-tab"];
+      if (k === state.activeKategori) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-kategori="${encodeURIComponent(k)}">${k}<span class="n">${count}</span>${avgPct === null ? "" : `<span class="n">&middot; ${fmt1(avgPct)}%</span>`}</button>`;
+    }).join("");
+    mount.querySelectorAll(".pill-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeKategori = decodeURIComponent(btn.getAttribute("data-kategori"));
+        renderPmlTabs();
+        renderKategoriTabs();
+        renderPegawaiChart();
+        renderPegawaiCards();
+        renderPegawaiTable();
+      });
+    });
+  }
+
+  function populateDateSelect() {
+    const sel = document.getElementById("dateSelect");
+    const prev = state.activeDate;
+    sel.innerHTML = state.dates.slice().reverse().map(d => `<option value="${d}">${formatTanggal(d)}</option>`).join("");
+    if (prev && state.dates.indexOf(prev) !== -1) {
+      sel.value = prev;
+      state.activeDate = prev;
+    } else {
+      state.activeDate = state.dates.length ? state.dates[state.dates.length - 1] : null;
+      if (state.activeDate) sel.value = state.activeDate;
+    }
+  }
+
+  function formatTanggal(d) {
+    if (!d) return "—";
+    const dt = new Date(d + "T00:00:00");
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+  }
+
+  // Rata-rata % Progres Pendataan per hari — dipakai chart Bagian 1
+  // (baik mode "Semua PML" maupun satu PML dipilih). SENGAJA rata-rata
+  // sederhana dari % progres tiap petugas (bukan sum(sudahDiproses) /
+  // sum(totalAlokasi)) — "total progres PML" = rata-rata progres semua
+  // petugasnya, sesuai definisi yang diminta, supaya petugas dengan
+  // alokasi kecil tidak tenggelam oleh petugas beralokasi besar.
+  function dailyAvgProgres(pmlFilter, kategoriFilter) {
+    const byDate = new Map();
+    state.dates.forEach(d => byDate.set(d, []));
+    state.pegawai.forEach(r => {
+      if (pmlFilter && pmlFilter !== "Semua PML" && r.pml !== pmlFilter) return;
+      if (kategoriFilter && kategoriFilter !== "Semua Kategori" && r.kategoriPetugas !== kategoriFilter) return;
+      const bucket = byDate.get(r.tanggalSnapshot);
+      if (bucket) bucket.push(r);
+    });
+    return state.dates.map(d => {
+      const rows = byDate.get(d);
+      const avgPct = rows.length ? rows.reduce((s, r) => s + progresPct(r), 0) / rows.length : null;
+      return { date: d, avgPct, petugasCount: rows.length };
+    });
+  }
+
+  // Label gabungan PML + Kategori Pegawai yang lagi aktif — dipakai di
+  // judul/deskripsi chart, kartu, & tabel Bagian 1 supaya kombinasi
+  // filter selalu jelas terbaca, bukan cuma salah satunya.
+  function activeScopeLabel() {
+    const parts = [];
+    if (state.activeKategori !== "Semua Kategori") parts.push("kategori " + state.activeKategori);
+    if (state.activePml !== "Semua PML") parts.push("PML " + state.activePml);
+    return parts.length ? parts.join(" &middot; ") : "se-Kota Jakarta Timur";
+  }
+
+  // Plugin Chart.js (native, tanpa library tambahan): gambar garis putus-
+  // putus di ambang "Perlu Perhatian" (THRESHOLD_PCT) supaya konteks 50%
+  // langsung terlihat di chart, bukan cuma disebut di teks di atasnya.
+  // Varian thresholdLinePlugin() untuk chart HORIZONTAL (indexAxis:"y",
+  // sumbu nilai = x) — dipakai di renderKecProgresChart(). Menggambar
+  // garis vertikal putus-putus di x=thresholdValue, bukan garis
+  // horizontal seperti versi aslinya (yang mengasumsikan sumbu nilai=y).
+  function thresholdLinePluginX(thresholdValue, labelText, colorVar) {
+    return {
+      id: "thresholdLineX",
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.x) return;
+        const x = scales.x.getPixelForValue(thresholdValue);
+        if (x < chartArea.left || x > chartArea.right) return;
+        const color = cssVar(colorVar);
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        ctx.font = "600 10.5px IBM Plex Mono";
+        ctx.textBaseline = "bottom";
+        ctx.textAlign = "left";
+        ctx.fillText(labelText, x + 4, chartArea.top + 10);
+        ctx.restore();
+      }
+    };
+  }
+
+  function thresholdLinePlugin(thresholdValue, labelText, colorVar) {
+    return {
+      id: "thresholdLine",
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.y) return;
+        const y = scales.y.getPixelForValue(thresholdValue);
+        if (y < chartArea.top || y > chartArea.bottom) return;
+        const color = cssVar(colorVar);
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, y);
+        ctx.lineTo(chartArea.right, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        ctx.font = "600 10.5px IBM Plex Mono";
+        ctx.textBaseline = "bottom";
+        ctx.textAlign = "right";
+        ctx.fillText(labelText, chartArea.right, y - 4);
+        ctx.restore();
+      }
+    };
+  }
+
+  // Plugin: tulis angka % langsung di atas tiap titik, supaya nilainya
+  // kebaca tanpa harus hover satu-satu — keluhan utama chart ini
+  // sebelumnya ("tidak bisa membaca apa yang mau dilihat di sana").
+  const pointValueLabelPlugin = {
+    id: "pointValueLabel",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      chart.data.datasets.forEach((ds, dsIndex) => {
+        const meta = chart.getDatasetMeta(dsIndex);
+        meta.data.forEach((point, i) => {
+          const v = ds.data[i];
+          if (v === null || v === undefined) return;
+          ctx.save();
+          ctx.font = "600 11px IBM Plex Mono";
+          ctx.fillStyle = cssVar("--ink");
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillText(fmt1(v) + "%", point.x, point.y - 10);
+          ctx.restore();
+        });
+      });
+    }
+  };
+
+  function renderSingleDayFallback(agg, scopeLabel) {
+    const canvas = document.getElementById("pegawaiTrendChart");
+    const fallback = document.getElementById("pegawaiChartSingleStat");
+    canvas.style.display = "none";
+    fallback.style.display = "flex";
+    fallback.className = "single-stat";
+    const a = agg[0];
+    const pct = a && a.avgPct !== null ? a.avgPct : 0;
+    const isBelow = pct < THRESHOLD_PCT;
+    fallback.innerHTML = `
+      <div class="single-stat-col">
+        <div class="single-stat-num${isBelow ? " below" : ""}">${fmt1(pct)}%</div>
+        <div class="single-stat-note">${formatTanggal(state.dates[0])}</div>
+      </div>
+      <div class="single-stat-bar-wrap">
+        <div class="single-stat-label">Rata-rata % progres pendataan ${scopeLabel === "se-Kota Jakarta Timur" ? "seluruh petugas internal BPS Jaktim (JIEP & Non-JIEP)" : "petugas " + scopeLabel.replace(/&middot;/g, "\u00b7")}, dari ${a ? fmt(a.petugasCount) : 0} petugas aktif. Baru ada 1 hari data — grafik tren garis akan muncul otomatis setelah data hari berikutnya diupload.</div>
+        <div class="single-stat-bar-track"><div class="single-stat-bar-fill${isBelow ? " below" : ""}" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>
+        <div class="single-stat-bar-ticks"><span>0%</span><span>Ambang 50%</span><span>100%</span></div>
+      </div>`;
+  }
+
+  function renderPegawaiChart() {
+    const ctx = document.getElementById("pegawaiTrendChart");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+    const cssTeal = cssVar("--teal");
+    const titleEl = document.getElementById("pegawaiChartTitle");
+    const descEl = document.getElementById("pegawaiChartDesc");
+    const fallback = document.getElementById("pegawaiChartSingleStat");
+
+    if (pegawaiChartInstance) { pegawaiChartInstance.destroy(); pegawaiChartInstance = null; }
+    if (!state.dates.length) { ctx.style.display = "none"; fallback.style.display = "none"; return; }
+
+    const labels = state.dates.map(formatTanggal);
+    const scopeLabel = activeScopeLabel();
+    const scopeLabelPlain = scopeLabel.replace(/&middot;/g, "\u00b7");
+    titleEl.textContent = "Tren Progres Rata-rata · " + scopeLabelPlain;
+    descEl.textContent = "Rata-rata % progres pendataan " + (scopeLabel === "se-Kota Jakarta Timur" ? "seluruh petugas internal BPS Jaktim (JIEP & Non-JIEP)" : "petugas " + scopeLabelPlain) + " — dihitung dari rata-rata progres tiap petugas (bukan jumlah gabungan), per hari upload data.";
+
+    const agg = dailyAvgProgres(
+      state.activePml === "Semua PML" ? null : state.activePml,
+      state.activeKategori === "Semua Kategori" ? null : state.activeKategori
+    );
+
+    // Line chart cuma bermakna kalau ada ≥2 titik untuk dibandingkan.
+    // Dengan 1 titik, tampilkan angka besar + progress bar (jelas dibaca
+    // sekali lihat) alih-alih kanvas kosong dengan 1 bulatan mengambang.
+    if (state.dates.length < 2) {
+      renderSingleDayFallback(agg, scopeLabel);
+      return;
+    }
+    ctx.style.display = "block";
+    fallback.style.display = "none";
+
+    pegawaiChartInstance = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "Rata-rata % Progres",
+          data: agg.map(a => a.avgPct),
+          borderColor: cssTeal,
+          backgroundColor: (c) => barGradient(c.chart.ctx, c.chart.chartArea, `${cssTeal}33`, `${cssTeal}00`),
+          borderWidth: 2.75, tension: 0.35, fill: true, spanGaps: true,
+          pointRadius: 4.5, pointBackgroundColor: "#FBF8F2", pointBorderColor: cssTeal, pointBorderWidth: 2, pointHoverRadius: 6.5
+        }]
+      },
+      plugins: [thresholdLinePlugin(THRESHOLD_PCT, "Ambang " + THRESHOLD_PCT + "%", "--alert"), pointValueLabelPlugin],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
+        animation: { duration: 800, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: false, boxPadding: 4,
+            callbacks: {
+              label: (item) => item.parsed.y === null ? "Belum ada data" : `Rata-rata progres: ${fmt1(item.parsed.y)}%`,
+              afterLabel: (item) => {
+                const a = agg[item.dataIndex];
+                return a && a.petugasCount ? `${a.petugasCount} petugas aktif` : "";
+              }
+            }
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, max: 100, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8, callback: (v) => v + "%" } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  function pegawaiRowsForTable() {
+    let out = state.pegawai.filter(r => r.tanggalSnapshot === state.activeDate);
+    if (state.activePml !== "Semua PML") out = out.filter(r => r.pml === state.activePml);
+    if (state.activeKategori !== "Semua Kategori") out = out.filter(r => r.kategoriPetugas === state.activeKategori);
+    if (state.searchPegawai.trim()) {
+      const q = state.searchPegawai.trim().toLowerCase();
+      out = out.filter(r => r.petugas.toLowerCase().includes(q));
+    }
+    if (state.onlyBelowPegawai) out = out.filter(r => progresPct(r) < THRESHOLD_PCT);
+    return out.slice().sort((a, b) => progresPct(a) - progresPct(b));
+  }
+
+  // Kartu delta harian per petugas — bandingkan progres pada tanggal
+  // aktif vs tanggal upload SEBELUMNYA (bukan "kemarin" secara kalender,
+  // tapi snapshot harian terakhir sebelum tanggal aktif — sesuai cara
+  // data diupload tiap hari). Pakai filter yang sama dengan tabel
+  // (PML/pencarian/toggle) supaya kartu & tabel selalu selaras.
+  function pegawaiRowsForCards() {
+    const idx = state.dates.indexOf(state.activeDate);
+    const prevDate = idx > 0 ? state.dates[idx - 1] : null;
+    const rows = pegawaiRowsForTable();
+    return rows.map(r => {
+      const prevRow = prevDate
+        ? state.pegawai.find(p => p.tanggalSnapshot === prevDate && normalizeKey(p.petugas) === normalizeKey(r.petugas) && normalizeKey(p.pml) === normalizeKey(r.pml))
+        : null;
+      const pctToday = progresPct(r);
+      const delta = prevRow ? pctToday - progresPct(prevRow) : null;
+      return { row: r, pctToday, delta, prevDate };
+    });
+  }
+
+  function renderPegawaiCards() {
+    const items = pegawaiRowsForCards();
+    const grid = document.getElementById("pegawaiCardsGrid");
+    const withDelta = items.filter(it => it.delta !== null).length;
+    document.getElementById("pegawaiCardsCount").innerHTML =
+      `${fmt(items.length)} petugas${withDelta ? ` &middot; dibandingkan upload sebelumnya (${withDelta} punya data pembanding)` : ""}`;
+    const scopeSuffix = activeScopeLabel().replace(/&middot;/g, "\u00b7");
+    document.getElementById("pegawaiCardsDesc").textContent =
+      `Progres per petugas pada ${formatTanggal(state.activeDate)} (${scopeSuffix}), dibanding upload data sebelumnya.`;
+
+    if (!items.length) {
+      grid.innerHTML = `<div class="empty-note">Tidak ada data yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+
+    grid.innerHTML = items.map(it => {
+      const r = it.row;
+      const isBelow = it.pctToday < THRESHOLD_PCT;
+      let deltaHtml;
+      if (it.delta === null) {
+        deltaHtml = `<span class="petugas-card-delta flat">Data pertama</span>`;
+      } else if (Math.abs(it.delta) < 0.05) {
+        deltaHtml = `<span class="petugas-card-delta flat">= 0,0 poin</span>`;
+      } else if (it.delta > 0) {
+        deltaHtml = `<span class="petugas-card-delta up">&#9650; ${fmt1(it.delta)} poin</span>`;
+      } else {
+        deltaHtml = `<span class="petugas-card-delta down">&#9660; ${fmt1(Math.abs(it.delta))} poin</span>`;
+      }
+      return `
+        <div class="petugas-card${isBelow ? " is-below" : ""}">
+          <div class="petugas-card-name">${r.petugas || "(tanpa nama)"}</div>
+          <div class="petugas-card-pml">PML ${r.pml || "—"}${r.kategoriPetugas ? " &middot; " + r.kategoriPetugas : ""}</div>
+          <div class="petugas-card-row">
+            <span class="petugas-card-pct">${fmt1(it.pctToday)}%</span>
+            ${deltaHtml}
+          </div>
+          <div class="petugas-card-sub">${fmt(r.sudahDiproses)} / ${fmt(r.totalAlokasi)} sudah diproses &middot; ${fmt(r.belumDiproses)} belum</div>
+        </div>`;
+    }).join("");
+  }
+
+  function renderPegawaiTable() {
+    const rows = pegawaiRowsForTable();
+    const wrap = document.getElementById("pegawaiTableWrap");
+    const below = rows.filter(r => progresPct(r) < THRESHOLD_PCT).length;
+    document.getElementById("pegawaiCount").innerHTML = `${fmt(rows.length)} petugas${below ? ` &middot; <span class="bad">${fmt(below)} di bawah 50%</span>` : ""}`;
+    const scopeSuffix = activeScopeLabel().replace(/&middot;/g, "\u00b7");
+    document.getElementById("pegawaiPanelDesc").textContent = `Progres pendataan per petugas pada ${formatTanggal(state.activeDate)}, ${scopeSuffix}. Diurutkan dari % progres pendataan terendah.`;
+
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada data yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+    const rowsHtml = rows.map(r => {
+      const pct = progresPct(r);
+      const cls = pct < THRESHOLD_PCT ? "row-below" : "";
+      return `
+        <tr class="${cls}">
+          <td class="name-cell">${r.petugas || "(tanpa nama)"}</td>
+          <td>${r.pml || "—"}</td>
+          <td>${r.kategoriPetugas || "—"}</td>
+          <td class="num">${fmt(r.totalAlokasi)}</td>
+          <td class="num">${fmt(r.sudahDiproses)}</td>
+          <td class="num">${fmt(r.submit)}</td>
+          <td class="num">${fmt(r.belumDiproses)}</td>
+          <td class="pct main">${fmt1(pct)}%</td>
+        </tr>`;
+    }).join("");
+    wrap.innerHTML = `
+      <table class="data-table ub-table">
+        <thead>
+          <tr>
+            <th>Petugas (PPL)</th>
+            <th>PML</th>
+            <th>Kategori</th>
+            <th class="num">Total Alokasi</th>
+            <th class="num">Sudah Diproses</th>
+            <th class="num">— dari itu Submit</th>
+            <th class="num">Belum Diproses</th>
+            <th class="pct">% Progres Pendataan</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function exportPegawaiExcel() {
+    const wb = XLSX.utils.book_new();
+    const rows = pegawaiRowsForTable().map(r => ({
+      "Tanggal": r.tanggalSnapshot,
+      "Petugas": r.petugas,
+      "PML": r.pml,
+      "Kategori": r.kategoriPetugas || "",
+      "Total Alokasi": r.totalAlokasi,
+      "Sudah Diproses": r.sudahDiproses,
+      "— dari itu Submit": r.submit,
+      "Belum Diproses": r.belumDiproses,
+      "% Progres Pendataan": Math.round(progresPct(r) * 10) / 10
+    }));
+    const ws1 = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Catatan": "Tidak ada data" }]);
+    ws1["!cols"] = Object.keys(rows[0] || { a: 1 }).map(() => ({ wch: 18 }));
+    XLSX.utils.book_append_sheet(wb, ws1, "Ringkasan Tanggal Terpilih");
+
+    const trenRows = state.pegawai
+      .filter(r => state.activePml === "Semua PML" || r.pml === state.activePml)
+      .filter(r => state.activeKategori === "Semua Kategori" || r.kategoriPetugas === state.activeKategori)
+      .map(r => ({
+        "Tanggal": r.tanggalSnapshot, "Petugas": r.petugas, "PML": r.pml, "Kategori": r.kategoriPetugas || "",
+        "Total Alokasi": r.totalAlokasi,
+        "Sudah Diproses": r.sudahDiproses, "— dari itu Submit": r.submit, "Belum Diproses": r.belumDiproses,
+        "% Progres Pendataan": Math.round(progresPct(r) * 10) / 10
+      }));
+    const ws2 = XLSX.utils.json_to_sheet(trenRows.length ? trenRows : [{ "Catatan": "Tidak ada data" }]);
+    ws2["!cols"] = Object.keys(trenRows[0] || { a: 1 }).map(() => ({ wch: 18 }));
+    XLSX.utils.book_append_sheet(wb, ws2, "Seluruh Tren Harian");
+
+    XLSX.writeFile(wb, `Report_UB_ProgresHarian_${todayStamp()}.xlsx`);
+  }
+
+  // =====================================================================
+  // BAGIAN 2 — KATEGORI x KECAMATAN
+  // =====================================================================
+  // Urutan kolom status = abjad (localeCompare "id"), sama seperti pivot
+  // Excel sumbernya (COUNTA dari NAMA, kolom = STATUS) — lihat Gambar 1.
+  // Dulu dipakai daftar tetap (STATUS_ORDER) yang cuma memuat 6 status,
+  // jadi status lain seperti "PROVINSI" diam-diam terlempar ke ujung
+  // tabel. Dengan abjad, status apa pun yang muncul di data otomatis
+  // ada di posisi yang benar tanpa perlu diedit di sini lagi.
+  function statusListPresent() {
+    const present = new Set(state.kecStatus.map(r => r.status).filter(Boolean));
+    return Array.from(present).sort((a, b) => a.localeCompare(b, "id"));
+  }
+
+  function kecList() {
+    const set = new Set();
+    state.kecStatus.forEach(r => r.kecamatan && set.add(r.kecamatan));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "id"));
+  }
+
+  function renderStatusCards() {
+    const statuses = statusListPresent();
+    const totals = {};
+    let grand = 0;
+    statuses.forEach(s => { totals[s] = 0; });
+    state.kecStatus.forEach(r => { totals[r.status] = (totals[r.status] || 0) + r.jumlah; grand += r.jumlah; });
+
+    document.getElementById("statusCards").innerHTML = statuses.map((s, i) => {
+      const val = totals[s] || 0;
+      const pct = grand ? (val / grand) * 100 : 0;
+      return `
+        <div class="status-card">
+          <div class="status-card-name"><span class="status-card-dot" style="background:${statusColor(s, i)};"></span>${s}</div>
+          <div class="status-card-value">${fmt(val)}</div>
+          <div class="status-card-sub">${fmt1(pct)}% dari total UB</div>
+        </div>`;
+    }).join("");
+  }
+
+  // Progres (%) BUTUH kolom jumlah_selesai/jumlah_belum dari view
+  // v_progres_kategori_kecamatan (lihat sql/fix-report-usaha-besar-3agu2026.sql).
+  // Kalau belum ada (view lama), mapKategoriKecamatanUBRow() di
+  // shared-supabase-loader.js mengembalikan null (bukan 0) untuk kedua
+  // field itu — dipakai di sini untuk mendeteksi & otomatis mundur ke
+  // tampilan "Total per Status" saja, dengan catatan penjelasan.
+  function kecProgresDataAvailable() {
+    return state.kecStatus.some(r => r.jumlahSelesai !== null && r.jumlahSelesai !== undefined);
+  }
+
+  function renderKecChartModeTabs() {
+    const mount = document.getElementById("kecChartModeTabs");
+    if (!mount) return;
+    const hasProgres = kecProgresDataAvailable();
+    if (!hasProgres) state.kecChartMode = "total";
+    const modes = [
+      { key: "progres", label: "Progres (%)", disabled: !hasProgres },
+      { key: "total", label: "Total per Status", disabled: false }
+    ];
+    mount.innerHTML = modes.map(m => {
+      const cls = ["pill-tab"];
+      if (m.key === state.kecChartMode) cls.push("is-active");
+      const disabledAttr = m.disabled ? "disabled style=\"opacity:0.45; cursor:not-allowed;\"" : "";
+      return `<button type="button" class="${cls.join(" ")}" data-mode="${m.key}" ${disabledAttr}>${m.label}</button>`;
+    }).join("");
+    mount.querySelectorAll(".pill-tab:not([disabled])").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.kecChartMode = btn.getAttribute("data-mode");
+        renderKecChartModeTabs();
+        renderKecChart();
+      });
+    });
+  }
+
+  // Progres per kecamatan = total jumlah_selesai / total jumlah, SEMUA
+  // status digabung (JIEP + Non-JIEP + STIS + dst) — sama definisi
+  // "selesai" dengan Bagian 1 (semua kode ket_hasil 1-9, bukan submit
+  // saja). Diurutkan NAIK (paling rendah di atas) supaya pimpinan
+  // langsung lihat kecamatan yang paling perlu perhatian.
+  function kecProgresRows() {
+    const kecs = kecList();
+    return kecs.map(k => {
+      const rows = state.kecStatus.filter(r => r.kecamatan === k);
+      const total = rows.reduce((s, r) => s + r.jumlah, 0);
+      const selesai = rows.reduce((s, r) => s + (r.jumlahSelesai || 0), 0);
+      const pct = total ? (selesai / total) * 100 : 0;
+      return { kecamatan: k, total, selesai, belum: total - selesai, pct };
+    }).sort((a, b) => a.pct - b.pct);
+  }
+
+  function progresThresholdColor(pct) {
+    if (pct < THRESHOLD_PCT) return cssVar("--alert");
+    if (pct < 80) return cssVar("--gold");
+    return cssVar("--teal");
+  }
+
+  function renderKecChart() {
+    const titleEl = document.getElementById("kecChartTitle");
+    const descEl = document.getElementById("kecChartDesc");
+    const note = document.getElementById("kecChartFallbackNote");
+    const hasProgres = kecProgresDataAvailable();
+
+    if (!hasProgres) {
+      note.style.display = "block";
+      note.textContent = "Catatan: sumber data (v_progres_kategori_kecamatan) belum menyediakan kolom jumlah_selesai/jumlah_belum, jadi tampilan Progres (%) belum bisa dihitung — lihat sql/fix-report-usaha-besar-3agu2026.sql untuk mengaktifkannya. Ditampilkan Total per Status untuk sementara.";
+    } else {
+      note.style.display = "none";
+    }
+
+    if (state.kecChartMode === "progres" && hasProgres) {
+      renderKecProgresChart(titleEl, descEl);
+    } else {
+      renderKecTotalStatusChart(titleEl, descEl);
+    }
+  }
+
+  function renderKecProgresChart(titleEl, descEl) {
+    const ctx = document.getElementById("kecamatanStatusChart");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+    if (kecStatusChartInstance) { kecStatusChartInstance.destroy(); kecStatusChartInstance = null; }
+
+    titleEl.textContent = "Progres Pendataan UB per Kecamatan";
+    descEl.textContent = "% Usaha Besar yang sudah diproses (semua kode hasil, bukan submit saja) dari total UB di tiap kecamatan, semua asal alokasi digabung. Diurutkan dari yang paling perlu perhatian.";
+
+    const rows = kecProgresRows();
+    if (!rows.length) return;
+
+    kecStatusChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: rows.map(r => r.kecamatan),
+        datasets: [{
+          label: "% Selesai",
+          data: rows.map(r => Math.round(r.pct * 10) / 10),
+          backgroundColor: rows.map(r => progresThresholdColor(r.pct)),
+          hoverBackgroundColor: rows.map(r => progresThresholdColor(r.pct)),
+          borderRadius: 4, borderSkipped: false,
+          barThickness: "flex", maxBarThickness: 26
+        }]
+      },
+      plugins: [thresholdLinePluginX(THRESHOLD_PCT, "Ambang " + THRESHOLD_PCT + "%", "--alert")],
+      options: {
+        indexAxis: "y",
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 800, easing: "easeOutCubic" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: false, boxPadding: 4,
+            callbacks: {
+              label: (item) => {
+                const r = rows[item.dataIndex];
+                return [`% Selesai: ${fmt1(r.pct)}%`, `Selesai: ${fmt(r.selesai)} / ${fmt(r.total)}`, `Belum: ${fmt(r.belum)}`];
+              }
+            }
+          }
+        },
+        scales: {
+          x: { beginAtZero: true, max: 100, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 6, callback: (v) => v + "%" } },
+          y: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  // Tampilan LAMA (total per status, bukan progres) — dipertahankan
+  // sebagai opsi kedua ("Total per Status") karena tetap berguna untuk
+  // melihat KOMPOSISI asal alokasi per kecamatan, cuma bukan lagi
+  // tampilan default karena tidak menjawab pertanyaan "progresnya
+  // sampai mana" yang dibutuhkan pimpinan.
+  function renderKecTotalStatusChart(titleEl, descEl) {
+    const ctx = document.getElementById("kecamatanStatusChart");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+    if (kecStatusChartInstance) { kecStatusChartInstance.destroy(); kecStatusChartInstance = null; }
+
+    titleEl.textContent = "Sebaran Usaha Besar per Kecamatan × Status";
+    descEl.textContent = "Jumlah perusahaan UB per kecamatan, dikelompokkan menurut asal alokasi (JIEP, BPS Jakarta Timur, STIS, Rutinan, Data Kantor Pusat, RI). Tampilan total target — bukan progres; gunakan tab \"Progres (%)\" untuk melihat capaiannya.";
+
+    const kecs = kecList();
+    if (!kecs.length) return;
+    const statuses = statusListPresent();
+
+    const datasets = statuses.map((s, i) => {
+      const color = statusColor(s, i);
+      return {
+        label: s,
+        data: kecs.map(k => {
+          const row = state.kecStatus.find(r => r.kecamatan === k && r.status === s);
+          return row ? row.jumlah : 0;
+        }),
+        backgroundColor: color,
+        hoverBackgroundColor: color,
+        stack: "ub",
+        borderRadius: 3, borderSkipped: false
+      };
+    });
+
+    kecStatusChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: { labels: kecs, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 800, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "circle", font: { family: "IBM Plex Sans", size: 11 }, color: cssInkSoft, padding: 16 } },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: true, boxPadding: 4
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, stacked: true, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8 } },
+          x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  function renderKecStatusTable() {
+    const kecs = kecList();
+    const statuses = statusListPresent();
+    const wrap = document.getElementById("kecStatusTableWrap");
+    if (!kecs.length) {
+      wrap.innerHTML = `<div class="empty-note">Belum ada data v_progres_kategori_kecamatan.</div>`;
+      return;
+    }
+    const hasProgres = kecProgresDataAvailable();
+    const totalsByStatus = {};
+    statuses.forEach(s => { totalsByStatus[s] = 0; });
+    let grandTotal = 0, grandSelesai = 0;
+
+    const rowsHtml = kecs.map(k => {
+      let rowTotal = 0, rowSelesai = 0;
+      const cells = statuses.map(s => {
+        const row = state.kecStatus.find(r => r.kecamatan === k && r.status === s);
+        const v = row ? row.jumlah : 0;
+        rowTotal += v;
+        if (row && row.jumlahSelesai !== null && row.jumlahSelesai !== undefined) rowSelesai += row.jumlahSelesai;
+        totalsByStatus[s] += v;
+        return `<td class="num${v ? "" : " zero"}">${fmt(v)}</td>`;
+      }).join("");
+      grandTotal += rowTotal;
+      grandSelesai += rowSelesai;
+      const rowPct = rowTotal ? (rowSelesai / rowTotal) * 100 : 0;
+      const progresCells = hasProgres
+        ? `<td class="num">${fmt(rowSelesai)}</td><td class="num">${fmt(rowTotal - rowSelesai)}</td><td class="pct main${rowPct < THRESHOLD_PCT ? " below" : ""}" style="${rowPct < THRESHOLD_PCT ? "color:var(--alert);" : ""}">${fmt1(rowPct)}%</td>`
+        : "";
+      return `<tr><td class="name-cell">${k}</td>${cells}<td class="num" style="font-weight:600;">${fmt(rowTotal)}</td>${progresCells}</tr>`;
+    }).join("");
+
+    const totalCells = statuses.map(s => `<td class="num">${fmt(totalsByStatus[s])}</td>`).join("");
+    const grandPct = grandTotal ? (grandSelesai / grandTotal) * 100 : 0;
+    const totalProgresCells = hasProgres
+      ? `<td class="num">${fmt(grandSelesai)}</td><td class="num">${fmt(grandTotal - grandSelesai)}</td><td class="pct main">${fmt1(grandPct)}%</td>`
+      : "";
+    const totalRow = `<tr class="row-total"><td class="name-cell">Total Keseluruhan</td>${totalCells}<td class="num">${fmt(grandTotal)}</td>${totalProgresCells}</tr>`;
+
+    const headCells = statuses.map(s => `<th class="num">${s}</th>`).join("");
+    const progresHeadCells = hasProgres ? `<th class="num">Selesai</th><th class="num">Belum</th><th class="pct">% Selesai</th>` : "";
+    wrap.innerHTML = `
+      <table class="data-table ub-table">
+        <thead>
+          <tr><th>Kecamatan</th>${headCells}<th class="num">Total Keseluruhan</th>${progresHeadCells}</tr>
+        </thead>
+        <tbody>${rowsHtml}${totalRow}</tbody>
+      </table>`;
+  }
+
+  function exportKecStatusExcel() {
+    const kecs = kecList();
+    const statuses = statusListPresent();
+    const hasProgres = kecProgresDataAvailable();
+    const rows = kecs.map(k => {
+      const row = { "Kecamatan": k };
+      let total = 0, selesai = 0;
+      statuses.forEach(s => {
+        const r = state.kecStatus.find(x => x.kecamatan === k && x.status === s);
+        const v = r ? r.jumlah : 0;
+        row[s] = v;
+        total += v;
+        if (r && r.jumlahSelesai !== null && r.jumlahSelesai !== undefined) selesai += r.jumlahSelesai;
+      });
+      row["Total Keseluruhan"] = total;
+      if (hasProgres) {
+        row["Selesai"] = selesai;
+        row["Belum"] = total - selesai;
+        row["% Selesai"] = Math.round((total ? (selesai / total) * 100 : 0) * 10) / 10;
+      }
+      return row;
+    });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Catatan": "Tidak ada data" }]);
+    ws["!cols"] = Object.keys(rows[0] || { a: 1 }).map(() => ({ wch: 20 }));
+    XLSX.utils.book_append_sheet(wb, ws, "Kecamatan x Status");
+    XLSX.writeFile(wb, `Report_UB_KategoriKecamatan_${todayStamp()}.xlsx`);
+  }
+
+  // =====================================================================
+  // BAGIAN 3 — DETAIL HASIL PENDATAAN (MATRIX)
+  // =====================================================================
+  // Key pencocokan petugas HARUS dinormalisasi (bukan string mentah),
+  // karena "petugas" & "pml" di v_detail_hasil_pendataan dan di tabel
+  // dasar ub_se2026_bps3172 (sumber hitungan Belum Diproses) bisa beda
+  // kapitalisasi / spasi ganda walau merujuk orang yang sama. Kalau
+  // dibiarkan pakai string mentah sebagai key, satu petugas bisa
+  // "terpecah" jadi 2 baris berbeda di Matrix (satu baris punya hasil
+  // 1-9 tapi Belum Diproses = 0, baris lain sebaliknya) — bikin total
+  // Bagian 3 kelihatan tidak sinkron dengan bagian lain padahal
+  // sebenarnya cuma masalah pencocokan nama, bukan selisih data asli.
+  function normalizeKey(s) {
+    return String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
+  }
+
+  function buildDetailRows(detail, belumDiproses) {
+    const map = new Map();
+    function ensure(petugas, pml) {
+      const key = normalizeKey(petugas) + "||" + normalizeKey(pml);
+      if (!map.has(key)) {
+        const counts = {};
+        KET_HASIL_ORDER.forEach(k => { counts[k.code] = 0; });
+        map.set(key, { petugas, pml, counts, belum: 0, total: 0 });
+      } else {
+        // Kalau ejaan mentahnya beda dari yang pertama kali tercatat
+        // (mis. "Armadi" vs "ARMADI " dari 2 tabel sumber berbeda),
+        // tandai di console — ini indikasi data sumber di Supabase perlu
+        // dirapikan, bukan cuma dipatch di sini.
+        const existing = map.get(key);
+        if (existing.petugas !== petugas || existing.pml !== pml) {
+          console.warn(`[Bagian 3] Ejaan nama tidak konsisten digabung otomatis: "${petugas}"/"${pml}" ↔ "${existing.petugas}"/"${existing.pml}"`);
+        }
+      }
+      return map.get(key);
+    }
+    detail.forEach(r => {
+      if (r.ketHasil === null) return; // seharusnya tidak ada di view ini, dijaga saja
+      const row = ensure(r.petugas, r.pml);
+      row.counts[r.ketHasil] = (row.counts[r.ketHasil] || 0) + r.jumlah;
+    });
+    belumDiproses.forEach(r => {
+      const row = ensure(r.petugas, r.pml);
+      row.belum += r.jumlah;
+    });
+    map.forEach(row => {
+      row.total = row.belum + KET_HASIL_ORDER.reduce((s, k) => s + (row.counts[k.code] || 0), 0);
+      row.pctSubmit = row.total ? ((row.counts[SUBMIT_CODE] || 0) / row.total) * 100 : 0;
+      // % Progres Pendataan sebenarnya: semua kode 1-9 (bukan cuma
+      // SUBMIT) dihitung sebagai "sudah diproses" — hanya baris Belum
+      // Diproses (ket_hasil IS NULL) yang dianggap belum progres.
+      row.pctProgres = row.total ? ((row.total - row.belum) / row.total) * 100 : 0;
+    });
+    return Array.from(map.values());
+  }
+
+  function detailRowsFiltered() {
+    let out = state.detailRows.slice();
+    if (state.searchDetail.trim()) {
+      const q = state.searchDetail.trim().toLowerCase();
+      out = out.filter(r => r.petugas.toLowerCase().includes(q));
+    }
+    if (state.sortDetail === "belumDesc") out.sort((a, b) => b.belum - a.belum);
+    else if (state.sortDetail === "nameAsc") out.sort((a, b) => a.petugas.localeCompare(b.petugas, "id"));
+    else out.sort((a, b) => a.pctProgres - b.pctProgres); // pctAsc (default)
+    return out;
+  }
+
+  function renderDetailTable() {
+    const rows = detailRowsFiltered();
+    const wrap = document.getElementById("detailTableWrap");
+    const belowCount = rows.filter(r => r.belum > 0).length;
+    document.getElementById("detailCount").innerHTML = `${fmt(rows.length)} petugas${belowCount ? ` &middot; <span class="bad">${fmt(belowCount)} masih ada yang Belum Diproses</span>` : ""}`;
+
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada data yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+
+    const headCells = KET_HASIL_ORDER.map(k => `<th class="num">${k.label}</th>`).join("");
+    const rowsHtml = rows.map(r => {
+      const cls = r.belum > 0 || r.pctProgres < THRESHOLD_PCT ? "row-below" : "";
+      const ketCells = KET_HASIL_ORDER.map(k => {
+        const v = r.counts[k.code] || 0;
+        return `<td class="num${v ? "" : " zero"}">${fmt(v)}</td>`;
+      }).join("");
+      return `
+        <tr class="${cls}">
+          <td class="name-cell">${r.petugas || "(tanpa nama)"}</td>
+          <td>${r.pml || "—"}</td>
+          <td class="num${r.belum ? "" : " zero"}">${fmt(r.belum)}</td>
+          ${ketCells}
+          <td class="num" style="font-weight:600;">${fmt(r.total)}</td>
+          <td class="pct main">${fmt1(r.pctProgres)}%</td>
+        </tr>`;
+    }).join("");
+
+    wrap.innerHTML = `
+      <table class="data-table ub-table">
+        <thead>
+          <tr>
+            <th>Petugas</th>
+            <th>PML</th>
+            <th class="num">Belum Diproses</th>
+            ${headCells}
+            <th class="num">Total</th>
+            <th class="pct">% Progres Pendataan</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function exportDetailExcel() {
+    const rows = detailRowsFiltered().map(r => {
+      const row = { "Petugas": r.petugas, "PML": r.pml, "Belum Diproses": r.belum };
+      KET_HASIL_ORDER.forEach(k => { row[k.label] = r.counts[k.code] || 0; });
+      row["Total"] = r.total;
+      row["% Progres Pendataan"] = Math.round(r.pctProgres * 10) / 10;
+      return row;
+    });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "Catatan": "Tidak ada data" }]);
+    ws["!cols"] = Object.keys(rows[0] || { a: 1 }).map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, ws, "Detail Hasil Pendataan");
+    XLSX.writeFile(wb, `Report_UB_DetailHasil_${todayStamp()}.xlsx`);
+  }
+
+  // =====================================================================
+  // UTIL BERSAMA
+  // =====================================================================
+  function todayStamp() {
+    return new Date().toLocaleDateString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-");
+  }
+
+  // =====================================================================
+  // MUAT DATA
+  // =====================================================================
+  // v_progres_pegawai_harian TIDAK punya kolom status/asal-alokasi (lihat
+  // mapProgresPegawaiHarianRow di shared-supabase-loader.js) — tapi satu
+  // petugas bisa muncul di lebih dari 1 baris pada tanggal yang sama
+  // (mis. alokasi dari JIEP dicatat terpisah dari alokasi non-JIEP).
+  // Karena SEMUA baris di view ini adalah pegawai internal BPS Jaktim
+  // (JIEP cuma menjelaskan ASAL alokasi UB-nya, bukan status
+  // kepegawaiannya), baris-baris itu harus digabung jadi 1 kartu/1 baris
+  // per petugas per tanggal — bukan dibiarkan jadi kartu duplikat
+  // (kasus "Mujiono muncul 2 cue card"). Digabung dengan MENJUMLAHKAN
+  // total_alokasi/sudah_diproses/submit/belum_diproses lalu % progres
+  // dihitung ulang dari hasil jumlah itu (bukan rata-rata dari 2 angka %
+  // yang skalanya beda) — supaya PPL beralokasi besar tidak timpang
+  // dibanding yang beralokasi kecil.
+  // kategoriPetugas (JIEP/Non JIEP) dilacak per baris mentah (r.kategoriPetugas
+  // — lihat kategoriPetugasFromStatus() di shared-supabase-loader.js, atau
+  // langsung dari data contoh/fallback) lalu diringkas jadi 1 label per
+  // petugas per tanggal: kalau semua baris mentahnya 1 kategori yang sama,
+  // pakai itu; kalau petugas itu ternyata mengerjakan KEDUA kategori pada
+  // hari yang sama, label jadi "Campuran" (jarang, tapi jangan diam-diam
+  // dianggap salah satu saja).
+  function mergePegawaiRows(rawRows) {
+    const map = new Map();
+    rawRows.forEach(r => {
+      const key = normalizeKey(r.petugas) + "||" + r.tanggalSnapshot;
+      if (!map.has(key)) {
+        map.set(key, {
+          tanggalSnapshot: r.tanggalSnapshot,
+          petugas: r.petugas,
+          pml: r.pml,
+          totalAlokasi: 0, submit: 0, sudahDiproses: 0, belumDiproses: 0,
+          kategoriSet: new Set()
+        });
+      }
+      const row = map.get(key);
+      if (row.pml && r.pml && normalizeKey(row.pml) !== normalizeKey(r.pml)) {
+        console.warn(`[Bagian 1] Petugas "${r.petugas}" tercatat di bawah PML berbeda pada ${r.tanggalSnapshot}: "${row.pml}" vs "${r.pml}" — baris digabung, dipakai PML "${row.pml}". Cek konsistensi data di Supabase.`);
+      } else if (!row.pml && r.pml) {
+        row.pml = r.pml;
+      }
+      if (r.kategoriPetugas) row.kategoriSet.add(r.kategoriPetugas);
+      row.totalAlokasi += r.totalAlokasi;
+      row.submit += r.submit;
+      row.sudahDiproses += r.sudahDiproses;
+      row.belumDiproses += r.belumDiproses;
+    });
+    return Array.from(map.values()).map(row => {
+      const kategoris = Array.from(row.kategoriSet);
+      row.kategoriPetugas = kategoris.length === 1 ? kategoris[0] : (kategoris.length > 1 ? "Campuran" : "");
+      delete row.kategoriSet;
+      return row;
+    });
+  }
+
+  function renderAll(data, sourceLabel, isDemo) {
+    state.pegawai = mergePegawaiRows(data.pegawai);
+    state.dates = Array.from(new Set(state.pegawai.map(r => r.tanggalSnapshot))).sort();
+    state.pmlList = buildPmlList(state.pegawai);
+    if (state.pmlList.indexOf(state.activePml) === -1) state.activePml = "Semua PML";
+    state.kategoriList = buildKategoriList(state.pegawai);
+    if (state.kategoriList.indexOf(state.activeKategori) === -1) state.activeKategori = "Semua Kategori";
+
+    state.kecStatus = data.kecStatus;
+    state.detailRows = buildDetailRows(data.detail.detail, data.detail.belumDiproses);
+
+    renderKpiStrip();
+
+    populateDateSelect();
+    renderPmlTabs();
+    renderKategoriTabs();
+    renderPegawaiChart();
+    renderPegawaiCards();
+    renderPegawaiTable();
+
+    renderStatusCards();
+    renderKecChartModeTabs();
+    renderKecChart();
+    renderKecStatusTable();
+
+    renderDetailTable();
+
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+    document.getElementById("demoBanner").classList.toggle("is-visible", !!isDemo);
+  }
+
+  async function loadData() {
+    const cfg = window.APP_CONFIG;
+    if (cfg.dataSource !== "supabase") {
+      throw new Error('dataSource bukan "supabase" — Report Usaha Besar hanya membaca dari Supabase (tidak ada padanan di Google Sheets lama), lihat catatan di shared-config.js.');
+    }
+    const [pegawai, kecStatus, detail] = await Promise.all([
+      window.SupabaseEngine.fetchProgresPegawaiHarianUBSupabase(),
+      window.SupabaseEngine.fetchKategoriKecamatanUBSupabase(),
+      window.SupabaseEngine.fetchDetailHasilPendataanUBSupabase()
+    ]);
+    return { pegawai, kecStatus, detail };
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    document.getElementById("dateSelect").addEventListener("change", (e) => { state.activeDate = e.target.value; renderPmlTabs(); renderPegawaiChart(); renderPegawaiCards(); renderPegawaiTable(); });
+    document.getElementById("searchPegawaiInput").addEventListener("input", (e) => { state.searchPegawai = e.target.value; renderPegawaiCards(); renderPegawaiTable(); });
+    document.getElementById("onlyBelowPegawaiToggle").addEventListener("change", (e) => { state.onlyBelowPegawai = e.target.checked; renderPegawaiCards(); renderPegawaiTable(); });
+    document.getElementById("btnExportPegawai").addEventListener("click", exportPegawaiExcel);
+
+    document.getElementById("btnExportKecStatus").addEventListener("click", exportKecStatusExcel);
+
+    document.getElementById("searchDetailInput").addEventListener("input", (e) => { state.searchDetail = e.target.value; renderDetailTable(); });
+    document.getElementById("sortDetailSelect").addEventListener("change", (e) => { state.sortDetail = e.target.value; renderDetailTable(); });
+    document.getElementById("btnExportDetail").addEventListener("click", exportDetailExcel);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.XLSX) {
+      problems.unshift("Library SheetJS (shared/xlsx.full.min.js) gagal dimuat — tombol Export ke Excel tidak akan berfungsi.");
+    }
+    if (!window.Chart) {
+      problems.unshift("Library Chart.js (shared/chart.umd.js) gagal dimuat — grafik tidak akan tampil.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[report-usaha-besar] memakai data contoh —", reason);
+      document.getElementById("demoBannerText").textContent =
+        "Supabase belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data UB SE2026 sebenarnya.";
+      const fb = window.FALLBACK_DATA.usahaBesarUB;
+      renderAll({ pegawai: fb.pegawaiHarian, kecStatus: fb.kategoriKecamatan, detail: fb.detailHasil }, "Data contoh — Supabase belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — Supabase belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadData();
+        const snapshot = JSON.stringify(data.pegawai) + JSON.stringify(data.kecStatus) + JSON.stringify(data.detail);
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const sourceLabel = `Supabase (v_progres_pegawai_harian, v_progres_kategori_kecamatan, v_detail_hasil_pendataan) &middot; ${data.pegawai.length} baris harian, ${data.kecStatus.length} baris kecamatan terbaca`;
+        renderAll(data, sourceLabel, false);
+        window.setSyncBadge("Diperbarui &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[report-usaha-besar] gagal memuat data:", err.message);
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+      useFallback("supabaseUrl / supabaseAnonKey belum diisi di shared-config.js");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>
