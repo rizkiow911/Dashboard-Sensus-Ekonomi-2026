@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Progres Harian Petugas — SE2026 Kota Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti halaman lain, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Dipakai tombol "Export ke Excel" di halaman ini. -->
+<script src="shared/xlsx.full.min.js"></script>
+<!-- Dipakai grafik tren riwayat per petugas. -->
+<script src="shared/chart.umd.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Progres Harian Petugas — di luar sistem token
+     bersama, mengikuti pola halaman lain (style per-halaman). Banyak
+     kelas di sini SENGAJA sama nama/bentuknya dengan report-petugas.html
+     (kec-tabs, toolbar, search-field, dst.) supaya nuansa visualnya
+     konsisten satu keluarga, sesuai arahan "lihat menu Report Petugas". */
+  main > * + * { margin-top: 32px !important; }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* ---- catatan definisi status, ditaruh di dalam hero ---- */
+  .threshold-note {
+    display: flex; align-items: center; gap: 10px; margin-top: 18px;
+    padding: 10px 14px; border: 1px dashed var(--alert); border-radius: var(--radius);
+    background: var(--alert-soft); font-size: 12.5px; color: var(--ink); flex-wrap: wrap;
+  }
+  .threshold-note .tag {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--alert); border: 1px solid var(--alert); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+
+  /* ---- toolbar: role toggle + tab kecamatan + tanggal + pencarian + export ---- */
+  .toolbar { display: flex; flex-direction: column; gap: 14px; }
+  .role-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 3px; }
+  .role-toggle button {
+    font-family: var(--font-mono); font-size: 12.5px; padding: 7px 16px; border-radius: 999px; border: none;
+    background: transparent; color: var(--ink-soft); cursor: pointer; transition: all 0.15s ease;
+  }
+  .role-toggle button.is-active { background: var(--ink); color: var(--paper); }
+
+  .kec-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .kec-tab {
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+    cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
+  }
+  .kec-tab:hover { border-color: var(--ink-soft); color: var(--ink); }
+  .kec-tab.is-active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .kec-tab .n { opacity: 0.7; margin-left: 5px; }
+
+  .toolbar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+  .toolbar-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .select-field select {
+    font-family: var(--font-mono); font-size: 12.5px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+    cursor: pointer;
+  }
+  .search-field { position: relative; }
+  .search-field input {
+    font-family: var(--font-body); font-size: 13.5px; padding: 9px 12px; width: 220px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+  }
+  .search-field input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .toggle-field { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+  .toggle-field input { accent-color: var(--alert); width: 15px; height: 15px; cursor: pointer; }
+  .export-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn.small { padding: 8px 14px; font-size: 12.5px; }
+
+  /* ---- panel tabel utama ---- */
+  .role-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .role-count { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+  .role-count .bad { color: var(--alert); font-weight: 500; }
+  .role-count .warn { color: var(--gold); font-weight: 500; }
+
+  table.progres-table td.num, table.progres-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.progres-table td.pct, table.progres-table th.pct { text-align: right; font-family: var(--font-mono); font-weight: 500; }
+  table.progres-table td.delta, table.progres-table th.delta { text-align: right; font-family: var(--font-mono); font-weight: 500; }
+  table.progres-table td.delta.up { color: var(--teal); }
+  table.progres-table td.delta.down { color: var(--alert); }
+  table.progres-table tr.row-none td { background: var(--alert-soft); }
+  table.progres-table tr.row-none td.pct, table.progres-table tr.row-none td.delta { color: var(--alert); }
+  table.progres-table tr.row-turun td { background: var(--gold-soft); }
+  table.progres-table tr.row-turun td.pct, table.progres-table tr.row-turun td.delta { color: var(--gold); }
+  table.progres-table td.name-cell { font-weight: 500; max-width: 220px; cursor: pointer; }
+  table.progres-table td.name-cell:hover { text-decoration: underline; text-decoration-color: var(--gold); }
+  table.progres-table td.name-cell .hint { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); font-weight: 400; margin-top: 2px; }
+  table.progres-table td, table.progres-table th { max-width: none; }
+
+  .status-pill.warn { background: var(--gold-soft); color: var(--gold); }
+  .status-pill.neutral { background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line); }
+
+  .empty-note { padding: 22px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+
+  /* ---- baris diagnosis otomatis di panel riwayat, untuk delta minus ---- */
+  tr.diag-row td.diag-note {
+    background: var(--alert-soft); color: var(--ink); font-size: 11.5px; font-style: italic;
+    padding: 7px 9px; white-space: normal;
+  }
+
+  /* ---- baris info periode kegiatan (Blok 0), ditaruh di dalam hero ---- */
+  .period-meta {
+    display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;
+    font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft);
+  }
+  .period-meta .sep { color: var(--ink-faint); }
+  .period-meta .warn { color: var(--gold); font-weight: 500; }
+
+  /* ---- panel tren harian se-kota (Blok 2) ---- */
+  table.trend-table td.num, table.trend-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.trend-table td.empty-cell { color: var(--ink-faint); }
+  .trend-chart-note {
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint);
+    margin-top: 8px;
+  }
+
+  /* ---- panel pivot delta harian (nama x tanggal) ---- */
+  .pivot-scroll { max-height: 620px; }
+  table.pivot-table { font-size: 12px; }
+  table.pivot-table th, table.pivot-table td { white-space: nowrap; }
+  table.pivot-table td.num, table.pivot-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.pivot-table td.delta-cell.up { color: var(--teal); font-weight: 500; }
+  table.pivot-table td.delta-cell.down { color: var(--alert); font-weight: 500; }
+  table.pivot-table td.empty-cell { color: var(--ink-faint); }
+  table.pivot-table th.sticky-col, table.pivot-table td.sticky-col {
+    position: sticky; background: var(--paper); z-index: 1;
+  }
+  table.pivot-table th.sticky-col { z-index: 3; }
+  table.pivot-table th.sticky-kec, table.pivot-table td.sticky-kec { left: 0; min-width: 110px; }
+  table.pivot-table th.sticky-nama, table.pivot-table td.sticky-nama {
+    left: 110px; min-width: 170px; font-weight: 500; box-shadow: 2px 0 0 var(--line-soft);
+  }
+  table.pivot-table td.sticky-nama .hint { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); font-weight: 400; }
+  .pivot-group-title { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pivot-group-title:first-child { margin-top: 4px; }
+
+  /* ---- panel riwayat per petugas (chart + tabel tren) ---- */
+  #historyPanel { display: none; }
+  #historyPanel.is-open { display: block; }
+  .history-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .history-head-meta { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+  .btn-close-history {
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); cursor: pointer;
+  }
+  .btn-close-history:hover { border-color: var(--alert); color: var(--alert); }
+  .chart-wrap { position: relative; min-height: 260px; margin-top: 18px; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+  .single-stat-note { padding: 14px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+</style>
+</head>
+<body data-page="progresHarian">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus3" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus3)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Progres Harian Petugas <span class="num">Siapa Bergerak, Siapa Stagnan</span></h1>
+      <p class="hero-sub">Progres pendataan tiap petugas (PPL) dan pengawas (PML) dari hari ke hari — untuk langsung mengidentifikasi petugas yang <strong>tidak ada progres</strong> pada tanggal terpilih.</p>
+      <div class="threshold-note">
+        <span class="tag">Definisi Status</span>
+        <span><strong>Tidak Ada Progres</strong> = % Progres Pendataan hari ini sama dengan hari data terakhir (delta 0). <strong>Perlu Dicek (turun)</strong> = progres turun dibanding hari sebelumnya. Basis angka % Progres Pendataan identik dengan menu Report Petugas.</span>
+      </div>
+      <!-- Blok 0 — info periode kegiatan, dihitung otomatis dari tanggal
+           snapshot yang benar-benar ada di data (bukan tanggal tetap yang
+           di-hardcode), supaya tidak perlu diubah manual sampai 31 Agustus. -->
+      <p class="period-meta" id="heroPeriodMeta">Memuat info periode&hellip;</p>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Supabase belum terbaca — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KPI STRIP ============================= -->
+  <section aria-label="Ringkasan tanggal terpilih">
+    <p class="section-label" id="kpiSectionLabel">Ringkasan &middot; tanggal terpilih</p>
+    <div class="kpi-strip reveal" id="kpiStrip"></div>
+  </section>
+
+  <!-- ============================= TREN HARIAN SE-KOTA (Blok 2) ============================= -->
+  <!-- Rata-rata % Progres Pendataan PPL & PML, seluruh kecamatan, per
+       tanggal snapshot — tidak terpengaruh tab kecamatan/peran/pencarian
+       di toolbar, supaya jadi angka acuan tren kota yang tetap. Baris
+       bertambah otomatis tiap ada snapshot baru sampai 31 Agustus, tanpa
+       perlu ubah kode. Grafik garis baru muncul otomatis begitu jumlah
+       hari valid >= 7 (lihat renderTrendPanel()). -->
+  <section class="panel reveal" id="trendPanel">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Tren Harian &middot; se-Kota Jakarta Timur</h2>
+        <p class="panel-desc">Rata-rata % Progres Pendataan PPL &amp; PML, seluruh kecamatan, tiap tanggal snapshot.</p>
+      </div>
+      <span class="role-count" id="trendMeta"></span>
+    </div>
+    <div class="chart-wrap" id="trendChartWrap" style="display:none;">
+      <canvas id="trendChart" role="img" aria-label="Grafik tren rata-rata progres harian PPL dan PML se-Kota"></canvas>
+    </div>
+    <p class="trend-chart-note" id="trendChartNote"></p>
+    <div class="table-scroll" id="trendTableWrap" style="max-height:320px; margin-top:14px;"></div>
+  </section>
+
+  <!-- ============================= TOOLBAR ============================= -->
+  <section class="panel reveal">
+    <div class="toolbar">
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Peran petugas</p>
+        <div class="role-toggle" id="roleToggle">
+          <button type="button" data-role="ppl">PPL</button>
+          <button type="button" data-role="pml">PML</button>
+        </div>
+      </div>
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih kecamatan</p>
+        <div class="kec-tabs" id="kecTabs"></div>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="select-field">
+            <select id="dateSelect" aria-label="Pilih tanggal snapshot"></select>
+          </div>
+          <div class="search-field">
+            <input type="text" id="searchInput" placeholder="Cari nama petugas&hellip;" autocomplete="off">
+          </div>
+          <label class="toggle-field">
+            <input type="checkbox" id="onlyNoProgressToggle">
+            Hanya tampilkan status stagnan
+          </label>
+        </div>
+        <div class="export-group">
+          <button class="btn secondary small" id="btnExportTanggal">Export Tanggal Ini (Excel)</button>
+          <button class="btn small" id="btnExportAll">Export Semua Riwayat (Excel)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= PANEL RIWAYAT PER PETUGAS ============================= -->
+  <section class="panel reveal" id="historyPanel">
+    <div class="history-head">
+      <div>
+        <h2 class="panel-title" id="historyTitle">Riwayat Petugas</h2>
+        <p class="history-head-meta" id="historyMeta"></p>
+      </div>
+      <button type="button" class="btn-close-history" id="btnCloseHistory">Tutup &times;</button>
+    </div>
+    <div class="chart-wrap" id="historyChartWrap">
+      <canvas id="historyChart" role="img" aria-label="Grafik tren progres pendataan harian petugas terpilih"></canvas>
+    </div>
+    <div class="table-scroll" id="historyTableWrap" style="max-height:280px; margin-top:18px;"></div>
+  </section>
+
+  <!-- ============================= TABEL UTAMA ============================= -->
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title" id="mainPanelTitle">Progres Petugas (PPL) &middot; per Tanggal</h2>
+        <p class="panel-desc" id="mainPanelDesc">Progres pendataan per petugas pada tanggal terpilih.</p>
+      </div>
+      <span class="role-count" id="mainCount"></span>
+    </div>
+    <p class="footer-row" style="font-size:12px; color:var(--ink-faint); margin:6px 0 0;">Klik nama petugas untuk melihat tren harian &amp; riwayat lengkapnya.</p>
+    <div class="table-scroll" id="mainTableWrap" style="max-height:560px; margin-top:14px;"></div>
+  </section>
+
+  <!-- ============================= PIVOT DELTA HARIAN (nama x tanggal) ============================= -->
+  <!-- Kolom tanggal mulai dari hari ke-2 data (hari pertama = DATA PERTAMA,
+       delta belum ada) dan bertambah otomatis tiap ada snapshot baru sampai
+       31 Agustus — tidak ada jumlah tanggal yang di-hardcode di sini.
+       Mengikuti filter kecamatan & pencarian nama yang sama dengan toolbar
+       di atas, tapi TIDAK terpengaruh toggle peran (PPL/PML) & tanggal —
+       kedua tabel (PPL & PML) selalu ditampilkan sekaligus. -->
+  <section class="panel reveal" id="pivotPanel">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title">Delta Progres Harian &middot; Seluruh Tanggal</h2>
+        <p class="panel-desc">&Delta; % progres pendataan per hari, per petugas &mdash; satu kolom per tanggal snapshot, dimulai dari hari kedua data.</p>
+      </div>
+      <span class="role-count" id="pivotMeta"></span>
+    </div>
+    <div class="toolbar" style="margin: 16px 0 4px;">
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih kecamatan</p>
+        <div class="kec-tabs" id="pivotKecTabs"></div>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="search-field">
+            <input type="text" id="pivotSearchInput" placeholder="Cari nama petugas&hellip;" autocomplete="off">
+          </div>
+        </div>
+        <div class="export-group">
+          <button class="btn secondary small" id="btnExportPivotPpl">Export PPL (Excel)</button>
+          <button class="btn secondary small" id="btnExportPivotPml">Export PML (Excel)</button>
+          <button class="btn small" id="btnExportPivotAll">Export PPL + PML (Excel)</button>
+        </div>
+      </div>
+    </div>
+    <p class="pivot-group-title">PPL</p>
+    <div class="table-scroll pivot-scroll" id="pivotTableWrapPpl"></div>
+    <p class="pivot-group-title">PML</p>
+    <div class="table-scroll pivot-scroll" id="pivotTableWrapPml"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  const STATUS = {
+    NONE: "TIDAK ADA PROGRES",
+    TURUN: "PERLU DICEK (turun)",
+    ADA: "ADA PROGRES",
+    PERTAMA: "DATA PERTAMA"
+  };
+
+  let state = {
+    ppl: [],   // SELURUH baris (semua tanggal) hasil v_progres_ppl_harian
+    pml: [],   // SELURUH baris (semua tanggal) hasil v_progres_pml_harian
+    dates: [],
+    activeDate: null,
+    activeRole: "ppl",
+    kecList: [],
+    activeKec: "Semua Kecamatan",
+    search: "",
+    onlyNoProgress: false,
+    historyKey: null, // { role, nama } yang sedang dibuka panel riwayatnya
+    // Filter khusus panel Pivot Delta Harian — sengaja TERPISAH dari
+    // activeKec/search toolbar utama di atas, karena pivot menggabungkan
+    // PPL & PML dari SELURUH tanggal sekaligus (tidak terikat activeDate),
+    // jadi daftar kecamatannya pun beda cakupan (lihat buildPivotKecList).
+    pivotKec: "Semua Kecamatan",
+    pivotSearch: ""
+  };
+
+  let historyChartInstance = null;
+  let trendChartInstance = null;
+
+  // Ambang jumlah hari valid (tanggal snapshot berbeda) sebelum grafik
+  // garis tren se-kota diaktifkan otomatis — di bawah ambang ini, tabel
+  // tren harian saja sudah cukup dan tidak menyesatkan (baris terlalu
+  // sedikit untuk digambar sebagai kurva). Ganti angka ini saja kalau
+  // ambangnya berubah.
+  const TREND_CHART_MIN_DAYS = 7;
+
+  // Batas periode kegiatan "Progres Harian Petugas": berjalan sepanjang
+  // bulan Agustus 2026, berakhir 31 Agustus. Ini SATU-SATUNYA tanggal
+  // tetap di halaman ini (batas kegiatan riil, bukan batas tampilan data)
+  // — jumlah baris/tanggal yang ditampilkan di tabel & grafik TETAP
+  // dinamis mengikuti snapshot yang benar-benar ada (lihat buildDateList,
+  // computeDailyTrend), tidak di-hardcode ke sejumlah hari tertentu.
+  const KEGIATAN_START = new Date(Date.UTC(2026, 7, 1));  // 1 Agustus 2026
+  const KEGIATAN_END = new Date(Date.UTC(2026, 7, 31));   // 31 Agustus 2026
+  const KEGIATAN_TOTAL_HARI = 31;
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function fmt1(n) { return (Number(n) || 0).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+  function fmtSigned1(n) {
+    const v = Number(n) || 0;
+    const s = v.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return v > 0 ? "+" + s : s;
+  }
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  function formatTanggal(d) {
+    if (!d) return "—";
+    const dt = new Date(d + "T00:00:00");
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+  }
+
+  function rowsForRole(role) { return role === "pml" ? state.pml : state.ppl; }
+
+  // ---------------------------------------------------------------------
+  // KPI STRIP — dihitung dari SELURUH data role aktif pada tanggal aktif
+  // (tidak terpengaruh tab kecamatan / pencarian yang sedang dipakai).
+  // ---------------------------------------------------------------------
+  function renderKpiStrip() {
+    const rows = rowsForRole(state.activeRole).filter(r => r.tanggal === state.activeDate);
+    const none = rows.filter(r => r.statusProgres === STATUS.NONE).length;
+    const turun = rows.filter(r => r.statusProgres === STATUS.TURUN).length;
+    const ada = rows.filter(r => r.statusProgres === STATUS.ADA).length;
+    const pertama = rows.filter(r => r.statusProgres === STATUS.PERTAMA).length;
+    const withDelta = rows.filter(r => r.deltaProgresPct !== null && r.statusProgres !== STATUS.PERTAMA);
+    const avgDelta = withDelta.length ? withDelta.reduce((s, r) => s + r.deltaProgresPct, 0) / withDelta.length : 0;
+
+    const roleLabel = state.activeRole === "pml" ? "pengawas (PML)" : "petugas (PPL)";
+    document.getElementById("kpiSectionLabel").textContent = `Ringkasan ${roleLabel} \u00b7 ${formatTanggal(state.activeDate)}`;
+
+    const cells = [
+      { value: fmt(rows.length), label: `Total ${roleLabel} terdata` },
+      { value: fmt(none), label: "Tidak ada progres", accentClass: none ? "alert" : "" },
+      { value: fmt(turun), label: "Perlu dicek (turun)", accentClass: turun ? "alert" : "" },
+      { value: fmt(ada), label: "Ada progres", accentClass: "accent" },
+      { value: fmt(pertama), label: "Baru muncul (data pertama)" },
+      { value: fmtSigned1(avgDelta) + "%", label: "Rata-rata delta harian", accentClass: avgDelta < 0 ? "alert" : "accent" }
+    ];
+    document.getElementById("kpiStrip").innerHTML = cells.map(c => `
+      <div class="kpi-cell">
+        <div class="kpi-value ${c.accentClass || ""}">${c.value}</div>
+        <div class="kpi-label">${c.label}</div>
+      </div>`).join("");
+  }
+
+  // ---------------------------------------------------------------------
+  // ROLE TOGGLE
+  // ---------------------------------------------------------------------
+  function renderRoleToggle() {
+    document.querySelectorAll("#roleToggle button").forEach(btn => {
+      btn.classList.toggle("is-active", btn.getAttribute("data-role") === state.activeRole);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // TAB KECAMATAN — dibangun dari role aktif + tanggal aktif saja, supaya
+  // angka di sebelah tab selalu mencerminkan konteks yang sedang dilihat.
+  // ---------------------------------------------------------------------
+  function buildKecList() {
+    const rows = rowsForRole(state.activeRole).filter(r => r.tanggal === state.activeDate);
+    const set = new Set();
+    rows.forEach(r => r.kecamatan && set.add(r.kecamatan));
+    return ["Semua Kecamatan", ...Array.from(set).sort((a, b) => a.localeCompare(b, "id"))];
+  }
+
+  function renderKecTabs() {
+    state.kecList = buildKecList();
+    if (state.kecList.indexOf(state.activeKec) === -1) state.activeKec = "Semua Kecamatan";
+    const rows = rowsForRole(state.activeRole).filter(r => r.tanggal === state.activeDate);
+    const mount = document.getElementById("kecTabs");
+    mount.innerHTML = state.kecList.map(k => {
+      const isAll = k === "Semua Kecamatan";
+      const count = isAll ? rows.length : rows.filter(r => r.kecamatan === k).length;
+      const cls = ["kec-tab"];
+      if (k === state.activeKec) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-kec="${encodeURIComponent(k)}">${k}<span class="n">${count}</span></button>`;
+    }).join("");
+    mount.querySelectorAll(".kec-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeKec = decodeURIComponent(btn.getAttribute("data-kec"));
+        renderKecTabs();
+        applyFilters();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // TANGGAL
+  // ---------------------------------------------------------------------
+  function renderDateSelect() {
+    const sel = document.getElementById("dateSelect");
+    const prev = state.activeDate;
+    sel.innerHTML = state.dates.slice().reverse().map(d => `<option value="${d}">${formatTanggal(d)}</option>`).join("");
+    if (prev && state.dates.indexOf(prev) !== -1) {
+      sel.value = prev;
+    } else {
+      state.activeDate = state.dates.length ? state.dates[state.dates.length - 1] : null;
+      if (state.activeDate) sel.value = state.activeDate;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // BLOK 0 — INFO PERIODE KEGIATAN (header)
+  // ---------------------------------------------------------------------
+  function utcDateOnly(d) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
+  function daysBetweenUtc(a, b) { return Math.round((utcDateOnly(b) - utcDateOnly(a)) / 86400000); }
+
+  function renderPeriodHeader() {
+    const el = document.getElementById("heroPeriodMeta");
+    if (!el) return;
+    const today = utcDateOnly(new Date());
+
+    // "Hari ke-N dari 31" dihitung dari tanggal hari ini terhadap batas
+    // kegiatan (1—31 Agustus 2026), DIKUNCI ke rentang [1, 31] — bukan
+    // dari jumlah baris data yang ada, supaya tetap benar walau snapshot
+    // sempat bolong (lihat catatan gap 1 Agustus).
+    let hariKe = daysBetweenUtc(KEGIATAN_START, today) + 1;
+    hariKe = Math.max(1, Math.min(hariKe, KEGIATAN_TOTAL_HARI));
+    const sisaHari = Math.max(0, daysBetweenUtc(today, KEGIATAN_END));
+
+    const jumlahHariValid = state.dates.length;
+    const mulaiSnapshot = state.dates.length ? formatTanggal(state.dates[0]) : "—";
+    const snapshotTerakhir = state.dates.length ? formatTanggal(state.dates[state.dates.length - 1]) : "—";
+
+    el.innerHTML = `
+      <span>Hari ke-${hariKe} dari ${KEGIATAN_TOTAL_HARI} (Agustus 2026)</span>
+      <span class="sep">&middot;</span>
+      <span>Data valid: ${jumlahHariValid} hari (sejak ${mulaiSnapshot})</span>
+      <span class="sep">&middot;</span>
+      <span>Snapshot terakhir: ${snapshotTerakhir}</span>
+      <span class="sep">&middot;</span>
+      <span class="${sisaHari <= 3 ? "warn" : ""}">Sisa ${sisaHari} hari kegiatan</span>`;
+  }
+
+  // ---------------------------------------------------------------------
+  // BLOK 2 — TREN HARIAN SE-KOTA (rata-rata PPL & PML per tanggal)
+  // ---------------------------------------------------------------------
+  // FULL OUTER JOIN manual antara tanggal-tanggal PPL & PML: kalau suatu
+  // hari cuma salah satu role yang datanya masuk, barisnya tetap muncul
+  // dengan nilai null di kolom yang kosong (dirender "–"), tidak hilang
+  // diam-diam dan tidak dianggap 0%.
+  function computeDailyTrend() {
+    const byDate = new Map(); // tanggal -> { ppl: [pct...], pml: [pct...] }
+    function add(role, rows) {
+      rows.forEach(r => {
+        if (!r.tanggal) return;
+        if (!byDate.has(r.tanggal)) byDate.set(r.tanggal, { ppl: [], pml: [] });
+        byDate.get(r.tanggal)[role].push(r.progresPendataanPct);
+      });
+    }
+    add("ppl", state.ppl);
+    add("pml", state.pml);
+    const dates = Array.from(byDate.keys()).sort();
+    return dates.map(tanggal => {
+      const { ppl, pml } = byDate.get(tanggal);
+      return {
+        tanggal,
+        rataPpl: ppl.length ? ppl.reduce((s, v) => s + v, 0) / ppl.length : null,
+        rataPml: pml.length ? pml.reduce((s, v) => s + v, 0) / pml.length : null
+      };
+    });
+  }
+
+  function renderTrendTable(rows) {
+    const wrap = document.getElementById("trendTableWrap");
+    if (!rows.length) { wrap.innerHTML = `<div class="empty-note">Belum ada data snapshot.</div>`; return; }
+    const rowsHtml = rows.slice().reverse().map(r => `
+      <tr>
+        <td>${formatTanggal(r.tanggal)}</td>
+        <td class="num ${r.rataPpl === null ? "empty-cell" : ""}">${r.rataPpl === null ? "–" : fmt1(r.rataPpl) + "%"}</td>
+        <td class="num ${r.rataPml === null ? "empty-cell" : ""}">${r.rataPml === null ? "–" : fmt1(r.rataPml) + "%"}</td>
+      </tr>`).join("");
+    wrap.innerHTML = `
+      <table class="data-table trend-table">
+        <thead>
+          <tr>
+            <th>Tanggal</th>
+            <th class="num">Rata-rata % Progres PPL</th>
+            <th class="num">Rata-rata % Progres PML</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function renderTrendChart(rows) {
+    const wrap = document.getElementById("trendChartWrap");
+    const canvas = document.getElementById("trendChart");
+    const note = document.getElementById("trendChartNote");
+    if (trendChartInstance) { trendChartInstance.destroy(); trendChartInstance = null; }
+
+    if (rows.length < TREND_CHART_MIN_DAYS) {
+      wrap.style.display = "none";
+      note.textContent = `Grafik garis akan muncul otomatis begitu data valid mencapai ${TREND_CHART_MIN_DAYS} hari (baru ${rows.length} hari) — tabel di bawah cukup untuk saat ini.`;
+      return;
+    }
+    if (!window.Chart) {
+      wrap.style.display = "none";
+      note.textContent = "Library Chart.js gagal dimuat — grafik tren tidak bisa ditampilkan, lihat tabel di bawah.";
+      return;
+    }
+    wrap.style.display = "block";
+    note.textContent = "";
+
+    const labels = rows.map(r => formatTanggal(r.tanggal));
+    const cssGold = cssVar("--gold");
+    const cssTeal = cssVar("--teal") || "#2E7D6B";
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+
+    trendChartInstance = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Rata-rata % PPL",
+            data: rows.map(r => r.rataPpl),
+            borderColor: cssGold, backgroundColor: `${cssGold}22`,
+            borderWidth: 2.5, tension: 0.3, fill: false, spanGaps: true,
+            pointRadius: 3.5, pointBackgroundColor: "#FBF8F2", pointBorderColor: cssGold, pointBorderWidth: 2
+          },
+          {
+            label: "Rata-rata % PML",
+            data: rows.map(r => r.rataPml),
+            borderColor: cssTeal, backgroundColor: `${cssTeal}22`,
+            borderWidth: 2.5, tension: 0.3, fill: false, spanGaps: true,
+            pointRadius: 3.5, pointBackgroundColor: "#FBF8F2", pointBorderColor: cssTeal, pointBorderWidth: 2
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
+        animation: { duration: 700, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: true, position: "top", labels: { font: { family: "IBM Plex Sans", size: 11.5 }, color: cssInkSoft, boxWidth: 12, usePointStyle: true } },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, boxPadding: 4,
+            callbacks: { label: (item) => `${item.dataset.label}: ${item.parsed.y === null ? "data tidak tersedia" : fmt1(item.parsed.y) + "%"}` }
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, max: 100, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8, callback: (v) => v + "%" } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  function renderTrendPanel() {
+    const rows = computeDailyTrend();
+    document.getElementById("trendMeta").textContent = `${fmt(rows.length)} tanggal snapshot`;
+    renderTrendChart(rows);
+    renderTrendTable(rows);
+  }
+
+  // ---------------------------------------------------------------------
+  // FILTER + TABEL UTAMA
+  // ---------------------------------------------------------------------
+  function statusSortRank(status) {
+    if (status === STATUS.NONE) return 0;
+    if (status === STATUS.TURUN) return 1;
+    if (status === STATUS.PERTAMA) return 2;
+    return 3; // ADA PROGRES
+  }
+
+  function filterRows() {
+    let out = rowsForRole(state.activeRole).filter(r => r.tanggal === state.activeDate);
+    if (state.activeKec !== "Semua Kecamatan") out = out.filter(r => r.kecamatan === state.activeKec);
+    if (state.search.trim()) {
+      const q = state.search.trim().toLowerCase();
+      out = out.filter(r => r.nama.toLowerCase().includes(q));
+    }
+    if (state.onlyNoProgress) out = out.filter(r => r.statusProgres === STATUS.NONE || r.statusProgres === STATUS.TURUN);
+    // Stagnan/turun lebih dulu, lalu progres terendah — supaya kandidat
+    // yang perlu pembinaan langsung terlihat di baris atas, sama pola
+    // dengan query "siapa yang stagnan hari ini" di catatan teknis.
+    return out.slice().sort((a, b) => {
+      const rankDiff = statusSortRank(a.statusProgres) - statusSortRank(b.statusProgres);
+      if (rankDiff !== 0) return rankDiff;
+      return a.progresPendataanPct - b.progresPendataanPct;
+    });
+  }
+
+  function statusBadge(status) {
+    if (status === STATUS.NONE) return `<span class="status-pill err">Tidak Ada Progres</span>`;
+    if (status === STATUS.TURUN) return `<span class="status-pill warn">Perlu Dicek (turun)</span>`;
+    if (status === STATUS.PERTAMA) return `<span class="status-pill neutral">Data Pertama</span>`;
+    return `<span class="status-pill ok">Ada Progres</span>`;
+  }
+
+  function deltaCell(r) {
+    if (r.deltaProgresPct === null) return `<td class="delta">—</td>`;
+    const cls = r.deltaProgresPct > 0 ? "up" : (r.deltaProgresPct < 0 ? "down" : "");
+    return `<td class="delta ${cls}">${fmtSigned1(r.deltaProgresPct)}%</td>`;
+  }
+
+  function rowClass(status) {
+    if (status === STATUS.NONE) return "row-none";
+    if (status === STATUS.TURUN) return "row-turun";
+    return "";
+  }
+
+  function renderMainTable(rows) {
+    const wrap = document.getElementById("mainTableWrap");
+    const role = state.activeRole;
+    const showKecCol = state.activeKec === "Semua Kecamatan";
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada data yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+    const kecTh = showKecCol ? "<th>Kecamatan</th>" : "";
+    const petugasTh = role === "pml" ? `<th class="num">Jml PPL</th>` : "";
+    const rowsHtml = rows.map(r => {
+      const kecTd = showKecCol ? `<td>${r.kecamatan}</td>` : "";
+      const petugasTd = role === "pml" ? `<td class="num">${fmt(r.jumlahPetugas)}</td>` : "";
+      const key = encodeURIComponent(role + "||" + r.nama);
+      return `
+        <tr class="${rowClass(r.statusProgres)}">
+          ${kecTd}
+          <td class="name-cell" data-open-history="${key}">${r.nama || "(tanpa nama)"}${r.email ? `<span class="hint">${r.email}</span>` : ""}</td>
+          ${petugasTd}
+          <td class="num">${fmt(r.jumlahSls)}</td>
+          <td class="num">${fmt(r.prelist)}</td>
+          <td class="num">${fmt(r.hasilPendataan)}</td>
+          <td class="pct">${fmt1(r.progresPendataanPct)}%</td>
+          ${deltaCell(r)}
+          <td>${statusBadge(r.statusProgres)}</td>
+        </tr>`;
+    }).join("");
+    wrap.innerHTML = `
+      <table class="data-table progres-table">
+        <thead>
+          <tr>
+            ${kecTh}
+            <th>Nama ${role === "ppl" ? "PPL" : "PML"}</th>
+            ${petugasTh}
+            <th class="num">Jml SLS</th>
+            <th class="num">Prelist</th>
+            <th class="num">Hasil Pendataan</th>
+            <th class="pct">% Progres</th>
+            <th class="delta">&Delta; Harian</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+    wrap.querySelectorAll("[data-open-history]").forEach(td => {
+      td.addEventListener("click", () => {
+        const [r, nama] = decodeURIComponent(td.getAttribute("data-open-history")).split("||");
+        openHistory(r, nama);
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // PIVOT DELTA HARIAN (nama x tanggal) — lihat catatan di HTML
+  // ---------------------------------------------------------------------
+  function pivotDateColumns() {
+    // Kolom dimulai dari hari kedua data (indeks 1) — hari pertama tidak
+    // punya delta (statusnya DATA PERTAMA), jadi tidak berguna sebagai
+    // kolom delta. Daftar tanggal (state.dates) sendiri sudah dinamis.
+    return state.dates.slice(1);
+  }
+
+  function prevDateOf(tanggal) {
+    const idx = state.dates.indexOf(tanggal);
+    return idx > 0 ? state.dates[idx - 1] : null;
+  }
+
+  function buildPivotKecList() {
+    const set = new Set();
+    state.ppl.forEach(r => r.kecamatan && set.add(r.kecamatan));
+    state.pml.forEach(r => r.kecamatan && set.add(r.kecamatan));
+    return ["Semua Kecamatan", ...Array.from(set).sort((a, b) => a.localeCompare(b, "id"))];
+  }
+
+  function renderPivotKecTabs() {
+    const kecList = buildPivotKecList();
+    if (kecList.indexOf(state.pivotKec) === -1) state.pivotKec = "Semua Kecamatan";
+    const mount = document.getElementById("pivotKecTabs");
+    mount.innerHTML = kecList.map(k => {
+      const cls = ["kec-tab"];
+      if (k === state.pivotKec) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-kec="${encodeURIComponent(k)}">${k}</button>`;
+    }).join("");
+    mount.querySelectorAll(".kec-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.pivotKec = decodeURIComponent(btn.getAttribute("data-kec"));
+        renderPivotSection();
+      });
+    });
+  }
+
+  function buildPivotRows(role) {
+    const byName = new Map();
+    rowsForRole(role).forEach(r => {
+      if (!r.nama) return;
+      if (!byName.has(r.nama)) byName.set(r.nama, { nama: r.nama, email: r.email, kecamatan: r.kecamatan, byDate: new Map() });
+      const entry = byName.get(r.nama);
+      entry.byDate.set(r.tanggal, r);
+      if (r.kecamatan) entry.kecamatan = r.kecamatan; // pakai kecamatan terbaru kalau berubah
+      if (r.email) entry.email = r.email;
+    });
+    let rows = Array.from(byName.values());
+    if (state.pivotKec !== "Semua Kecamatan") rows = rows.filter(e => e.kecamatan === state.pivotKec);
+    if (state.pivotSearch.trim()) {
+      const q = state.pivotSearch.trim().toLowerCase();
+      rows = rows.filter(e => e.nama.toLowerCase().includes(q));
+    }
+    return rows.sort((a, b) => (a.kecamatan || "").localeCompare(b.kecamatan || "", "id") || a.nama.localeCompare(b.nama, "id"));
+  }
+
+  function pivotCellHtml(entry, tanggal) {
+    const r = entry.byDate.get(tanggal);
+    if (!r) return `<td class="num empty-cell" title="Tidak ada data petugas ini pada ${formatTanggal(tanggal)}">–</td>`;
+    if (r.deltaProgresPct === null) return `<td class="num empty-cell" title="Data pertama petugas ini (${formatTanggal(tanggal)})">–</td>`;
+    const cls = r.deltaProgresPct > 0 ? "up" : (r.deltaProgresPct < 0 ? "down" : "");
+    let title = `% Progres pada ${formatTanggal(tanggal)}: ${fmt1(r.progresPendataanPct)}%`;
+    if (r.deltaProgresPct < 0) {
+      const prevRow = entry.byDate.get(prevDateOf(tanggal));
+      const note = diagnoseTurun(r, prevRow);
+      if (note) title += " — " + note;
+    }
+    return `<td class="num delta-cell ${cls}" title="${escapeHtml(title)}">${fmtSigned1(r.deltaProgresPct)}%</td>`;
+  }
+
+  function renderPivotTable(wrapId, role) {
+    const wrap = document.getElementById(wrapId);
+    const cols = pivotDateColumns();
+    const rows = buildPivotRows(role);
+    if (!cols.length) {
+      wrap.innerHTML = `<div class="empty-note">Delta harian baru bisa dihitung setelah ada minimal 2 hari snapshot.</div>`;
+      return;
+    }
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada ${role === "ppl" ? "PPL" : "PML"} yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+    const colsHtml = cols.map(d => `<th class="num">${formatTanggal(d).replace(/^[A-Za-z]+, /, "")}</th>`).join("");
+    const rowsHtml = rows.map(entry => `
+      <tr>
+        <td class="sticky-col sticky-kec">${entry.kecamatan || "–"}</td>
+        <td class="sticky-col sticky-nama" title="${entry.email || "Email tidak tersedia"}">${entry.nama}</td>
+        ${cols.map(d => pivotCellHtml(entry, d)).join("")}
+      </tr>`).join("");
+    wrap.innerHTML = `
+      <table class="data-table pivot-table">
+        <thead>
+          <tr>
+            <th class="sticky-col sticky-kec">Kecamatan</th>
+            <th class="sticky-col sticky-nama">Nama ${role === "ppl" ? "PPL" : "PML"}</th>
+            ${colsHtml}
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function renderPivotSection() {
+    renderPivotKecTabs();
+    const cols = pivotDateColumns();
+    document.getElementById("pivotMeta").textContent = cols.length
+      ? `${fmt(cols.length)} kolom tanggal (${formatTanggal(cols[0])} \u2013 ${formatTanggal(cols[cols.length - 1])})`
+      : "Belum ada kolom delta";
+    renderPivotTable("pivotTableWrapPpl", "ppl");
+    renderPivotTable("pivotTableWrapPml", "pml");
+  }
+
+  function applyFilters() {
+    renderKpiStrip();
+    const rows = filterRows();
+    const role = state.activeRole;
+    const none = rows.filter(r => r.statusProgres === STATUS.NONE).length;
+    const turun = rows.filter(r => r.statusProgres === STATUS.TURUN).length;
+    const roleWord = role === "pml" ? "pengawas" : "petugas";
+    let countHtml = `${fmt(rows.length)} ${roleWord}`;
+    if (none) countHtml += ` &middot; <span class="bad">${fmt(none)} tidak ada progres</span>`;
+    if (turun) countHtml += ` &middot; <span class="warn">${fmt(turun)} perlu dicek (turun)</span>`;
+    document.getElementById("mainCount").innerHTML = countHtml;
+
+    const kecSuffix = state.activeKec === "Semua Kecamatan" ? "se-Kota Jakarta Timur" : `Kecamatan ${state.activeKec}`;
+    document.getElementById("mainPanelTitle").textContent = `Progres ${role === "ppl" ? "Petugas (PPL)" : "Pengawas (PML)"} \u00b7 ${formatTanggal(state.activeDate)}`;
+    document.getElementById("mainPanelDesc").textContent = `Progres pendataan per ${roleWord}, ${kecSuffix}, pada ${formatTanggal(state.activeDate)}. Status stagnan/turun ditampilkan lebih dulu.`;
+
+    renderMainTable(rows);
+    renderPivotSection();
+  }
+
+  // ---------------------------------------------------------------------
+  // PANEL RIWAYAT PER PETUGAS (klik nama pada tabel)
+  // ---------------------------------------------------------------------
+  function historyRowsFor(role, nama) {
+    return rowsForRole(role).filter(r => r.nama === nama).slice().sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  }
+
+  function renderHistoryChart(rows) {
+    const wrap = document.getElementById("historyChartWrap");
+    const canvas = document.getElementById("historyChart");
+    if (historyChartInstance) { historyChartInstance.destroy(); historyChartInstance = null; }
+
+    if (rows.length < 2) {
+      canvas.style.display = "none";
+      wrap.querySelectorAll(".single-stat-note").forEach(n => n.remove());
+      const note = document.createElement("div");
+      note.className = "single-stat-note";
+      note.textContent = rows.length
+        ? `Baru ada 1 hari data (${formatTanggal(rows[0].tanggal)}) — grafik tren garis akan muncul otomatis setelah ada data hari berikutnya.`
+        : "Belum ada data riwayat untuk petugas ini.";
+      wrap.appendChild(note);
+      return;
+    }
+    wrap.querySelectorAll(".single-stat-note").forEach(n => n.remove());
+    canvas.style.display = "block";
+
+    const labels = rows.map(r => formatTanggal(r.tanggal));
+    const cssGold = cssVar("--gold");
+    const cssLine = cssVar("--line-soft");
+    const cssInkSoft = cssVar("--ink-soft");
+
+    historyChartInstance = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "% Progres Pendataan",
+          data: rows.map(r => r.progresPendataanPct),
+          borderColor: cssGold,
+          backgroundColor: `${cssGold}22`,
+          borderWidth: 2.75, tension: 0.3, fill: true, spanGaps: true,
+          pointRadius: 4.5, pointBackgroundColor: "#FBF8F2", pointBorderColor: cssGold, pointBorderWidth: 2, pointHoverRadius: 6.5
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
+        animation: { duration: 700, easing: "easeOutCubic" },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#151E30", titleFont: { family: "IBM Plex Sans", size: 12, weight: "600" },
+            bodyFont: { family: "IBM Plex Mono", size: 11.5 }, padding: 10, cornerRadius: 6, displayColors: false, boxPadding: 4,
+            callbacks: {
+              label: (item) => `% Progres: ${fmt1(item.parsed.y)}%`,
+              afterLabel: (item) => {
+                const r = rows[item.dataIndex];
+                return r.deltaProgresPct === null ? "Data pertama" : `Delta: ${fmtSigned1(r.deltaProgresPct)}%`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: { beginAtZero: true, max: 100, grid: { color: cssLine, drawTicks: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 }, color: cssInkSoft, padding: 8, callback: (v) => v + "%" } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 11 }, color: cssInkSoft } }
+        }
+      }
+    });
+  }
+
+  // Diagnosis otomatis untuk delta minus: bedakan "Hasil Pendataan beneran
+  // berkurang" (dokumen hilang/dibatalkan di sumber — perlu ditelusuri)
+  // dari "Prelist berubah" (penyebut nambah, wajar kalau ada reassignment
+  // SLS, bukan berarti hasil kerja petugas berkurang).
+  function diagnoseTurun(cur, prev) {
+    if (!prev || cur.deltaProgresPct === null || cur.deltaProgresPct >= 0) return "";
+    if (cur.hasilPendataan < prev.hasilPendataan) {
+      return `Kemungkinan penyebab: Hasil Pendataan berkurang (${fmt(prev.hasilPendataan)} \u2192 ${fmt(cur.hasilPendataan)}) — ada indikasi dokumen yang hilang/dibatalkan di sumber data (FASIH-SM), bukan sekadar penurunan %. Perlu ditelusuri manual.`;
+    }
+    if (cur.prelist !== prev.prelist) {
+      return `Kemungkinan penyebab: Prelist (penyebut) berubah dari ${fmt(prev.prelist)} menjadi ${fmt(cur.prelist)} — % turun karena target bertambah (mis. reassignment SLS), Hasil Pendataan sendiri tidak berkurang (${fmt(prev.hasilPendataan)} \u2192 ${fmt(cur.hasilPendataan)}).`;
+    }
+    return `Penurunan % tidak match dengan perubahan Prelist maupun Hasil Pendataan yang tercatat (keduanya sama dengan hari sebelumnya) — kemungkinan snapshot ganda/keliru tanggal. Perlu ditelusuri manual ke sumber data.`;
+  }
+
+  function escapeHtml(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function renderHistoryTable(rows, role) {
+    const wrap = document.getElementById("historyTableWrap");
+    if (!rows.length) { wrap.innerHTML = `<div class="empty-note">Belum ada data riwayat.</div>`; return; }
+    // rows datang terurut naik (tanggal lama -> baru) dari historyRowsFor —
+    // diagnosis dihitung di urutan ini (butuh baris sebelumnya), baru
+    // ditampilkan terbalik (terbaru dulu) seperti sebelumnya.
+    const enriched = rows.map((r, i) => ({ r, note: diagnoseTurun(r, rows[i - 1]) }));
+    const rowsHtml = enriched.slice().reverse().map(({ r, note }) => `
+      <tr class="${rowClass(r.statusProgres)}">
+        <td>${formatTanggal(r.tanggal)}</td>
+        <td class="num">${fmt(r.prelist)}</td>
+        <td class="num">${fmt(r.hasilPendataan)}</td>
+        <td class="pct">${fmt1(r.progresPendataanPct)}%</td>
+        ${deltaCell(r)}
+        <td>${statusBadge(r.statusProgres)}</td>
+      </tr>${note ? `<tr class="diag-row"><td colspan="6" class="diag-note">&#9888; ${escapeHtml(note)}</td></tr>` : ""}`).join("");
+    wrap.innerHTML = `
+      <table class="data-table progres-table">
+        <thead>
+          <tr>
+            <th>Tanggal</th>
+            <th class="num">Prelist</th>
+            <th class="num">Hasil Pendataan</th>
+            <th class="pct">% Progres</th>
+            <th class="delta">&Delta; Harian</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function openHistory(role, nama) {
+    state.historyKey = { role, nama };
+    const rows = historyRowsFor(role, nama);
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    const panel = document.getElementById("historyPanel");
+    panel.classList.add("is-open");
+    document.getElementById("historyTitle").textContent = `Riwayat ${role === "ppl" ? "PPL" : "PML"} \u00b7 ${nama}`;
+    document.getElementById("historyMeta").textContent = latest
+      ? `${latest.kecamatan} \u00b7 ${latest.email || "email tidak tercatat"} \u00b7 progres terakhir ${fmt1(latest.progresPendataanPct)}% pada ${formatTanggal(latest.tanggal)}`
+      : "";
+    renderHistoryChart(rows);
+    renderHistoryTable(rows, role);
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function closeHistory() {
+    state.historyKey = null;
+    document.getElementById("historyPanel").classList.remove("is-open");
+    if (historyChartInstance) { historyChartInstance.destroy(); historyChartInstance = null; }
+  }
+
+  // ---------------------------------------------------------------------
+  // EXPORT KE EXCEL
+  // ---------------------------------------------------------------------
+  function round1(n) { return Math.round((Number(n) || 0) * 10) / 10; }
+
+  function toExportRow(r, role) {
+    const row = { "Tanggal": r.tanggal, "Kecamatan": r.kecamatan };
+    row[role === "ppl" ? "Nama PPL" : "Nama PML"] = r.nama;
+    row["Email"] = r.email;
+    if (role === "pml") row["Jumlah PPL Dibawahnya"] = r.jumlahPetugas;
+    Object.assign(row, {
+      "Jumlah SLS": r.jumlahSls,
+      "Prelist": r.prelist,
+      "Hasil Pendataan": r.hasilPendataan,
+      "% Progres Pendataan": round1(r.progresPendataanPct),
+      "Delta Harian (%)": r.deltaProgresPct === null ? "" : round1(r.deltaProgresPct),
+      "Status Progres": r.statusProgres
+    });
+    return row;
+  }
+
+  function sheetSafeName(name) {
+    return name.replace(/[:\\/?*\[\]]/g, "").slice(0, 31);
+  }
+
+  function addRoleSheet(wb, rows, role, sheetName) {
+    const data = rows.map(r => toExportRow(r, role));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = Object.keys(data[0] || { a: 1 }).map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, ws, sheetSafeName(sheetName));
+  }
+
+  function todayStamp() {
+    return new Date().toLocaleDateString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-");
+  }
+
+  // ---------------------------------------------------------------------
+  // EXPORT PIVOT DELTA HARIAN KE EXCEL
+  // ---------------------------------------------------------------------
+  // Header kolom dibangun dinamis dari pivotDateColumns() — sheet yang
+  // dihasilkan otomatis lebih lebar sendiri tiap ada tanggal baru, tidak
+  // perlu ubah kode ini sampai 31 Agustus.
+  function pivotCellExportValue(entry, tanggal) {
+    const r = entry.byDate.get(tanggal);
+    if (!r) return "";
+    if (r.deltaProgresPct === null) return "Data Pertama";
+    return round1(r.deltaProgresPct);
+  }
+
+  function buildPivotSheet(role) {
+    const cols = pivotDateColumns();
+    const rows = buildPivotRows(role);
+    const header = ["Kecamatan", role === "ppl" ? "Nama PPL" : "Nama PML", "Email", ...cols.map(d => formatTanggal(d))];
+    const data = rows.map(e => [e.kecamatan || "", e.nama, e.email || "", ...cols.map(d => pivotCellExportValue(e, d))]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
+    ws["!cols"] = header.map((h, i) => ({ wch: i < 3 ? 20 : 13 }));
+    return ws;
+  }
+
+  function exportPivotExcel(role) {
+    const wb = XLSX.utils.book_new();
+    const ws = buildPivotSheet(role);
+    XLSX.utils.book_append_sheet(wb, ws, role === "ppl" ? "Delta Harian PPL" : "Delta Harian PML");
+    const kecPart = state.pivotKec === "Semua Kecamatan" ? "SemuaKecamatan" : sheetSafeName(state.pivotKec);
+    XLSX.writeFile(wb, `DeltaHarian_${role.toUpperCase()}_${kecPart}_${todayStamp()}.xlsx`);
+  }
+
+  function exportPivotExcelAll() {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildPivotSheet("ppl"), "Delta Harian PPL");
+    XLSX.utils.book_append_sheet(wb, buildPivotSheet("pml"), "Delta Harian PML");
+    const kecPart = state.pivotKec === "Semua Kecamatan" ? "SemuaKecamatan" : sheetSafeName(state.pivotKec);
+    XLSX.writeFile(wb, `DeltaHarian_PPL_PML_${kecPart}_${todayStamp()}.xlsx`);
+  }
+
+  function exportTanggalExcel() {
+    const wb = XLSX.utils.book_new();
+    const role = state.activeRole;
+    const rows = filterRows();
+    addRoleSheet(wb, rows, role, role === "ppl" ? "PPL" : "PML");
+    const kecPart = state.activeKec === "Semua Kecamatan" ? "SemuaKecamatan" : sheetSafeName(state.activeKec);
+    XLSX.writeFile(wb, `ProgresHarian_${role.toUpperCase()}_${kecPart}_${state.activeDate}.xlsx`);
+  }
+
+  function exportAllExcel() {
+    const wb = XLSX.utils.book_new();
+    addRoleSheet(wb, state.ppl, "ppl", "Riwayat PPL");
+    addRoleSheet(wb, state.pml, "pml", "Riwayat PML");
+    XLSX.writeFile(wb, `ProgresHarian_SeluruhRiwayat_${todayStamp()}.xlsx`);
+  }
+
+  // ---------------------------------------------------------------------
+  // MUAT DATA
+  // ---------------------------------------------------------------------
+  function buildDateList(ppl, pml) {
+    const set = new Set();
+    ppl.forEach(r => r.tanggal && set.add(r.tanggal));
+    pml.forEach(r => r.tanggal && set.add(r.tanggal));
+    return Array.from(set).sort();
+  }
+
+  function renderAll(ppl, pml, sourceLabel, isDemo) {
+    state.ppl = ppl;
+    state.pml = pml;
+    state.dates = buildDateList(ppl, pml);
+    if (state.dates.indexOf(state.activeDate) === -1) {
+      state.activeDate = state.dates.length ? state.dates[state.dates.length - 1] : null;
+    }
+
+    renderPeriodHeader();
+    renderTrendPanel();
+    renderRoleToggle();
+    renderDateSelect();
+    renderKecTabs();
+    applyFilters();
+
+    if (state.historyKey) {
+      const rows = historyRowsFor(state.historyKey.role, state.historyKey.nama);
+      if (rows.length) openHistory(state.historyKey.role, state.historyKey.nama);
+      else closeHistory();
+    }
+
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+    document.getElementById("demoBanner").classList.toggle("is-visible", !!isDemo);
+  }
+
+  async function loadData() {
+    const cfg = window.APP_CONFIG;
+    if (cfg.dataSource !== "supabase") {
+      throw new Error('dataSource bukan "supabase" — Progres Harian Petugas hanya membaca dari view Supabase (tidak ada padanan di Google Sheets lama).');
+    }
+    return window.SupabaseEngine.fetchProgresHarianSupabase();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    document.querySelectorAll("#roleToggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeRole = btn.getAttribute("data-role");
+        state.activeKec = "Semua Kecamatan";
+        renderRoleToggle();
+        renderKecTabs();
+        applyFilters();
+      });
+    });
+    document.getElementById("dateSelect").addEventListener("change", (e) => {
+      state.activeDate = e.target.value;
+      renderKecTabs();
+      applyFilters();
+    });
+    document.getElementById("searchInput").addEventListener("input", (e) => { state.search = e.target.value; applyFilters(); });
+    document.getElementById("onlyNoProgressToggle").addEventListener("change", (e) => { state.onlyNoProgress = e.target.checked; applyFilters(); });
+    document.getElementById("pivotSearchInput").addEventListener("input", (e) => { state.pivotSearch = e.target.value; renderPivotSection(); });
+    document.getElementById("btnExportPivotPpl").addEventListener("click", () => exportPivotExcel("ppl"));
+    document.getElementById("btnExportPivotPml").addEventListener("click", () => exportPivotExcel("pml"));
+    document.getElementById("btnExportPivotAll").addEventListener("click", exportPivotExcelAll);
+    document.getElementById("btnExportTanggal").addEventListener("click", exportTanggalExcel);
+    document.getElementById("btnExportAll").addEventListener("click", exportAllExcel);
+    document.getElementById("btnCloseHistory").addEventListener("click", closeHistory);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.XLSX) {
+      problems.unshift("Library SheetJS (shared/xlsx.full.min.js) gagal dimuat — tombol Export ke Excel tidak akan berfungsi.");
+    }
+    if (!window.Chart) {
+      problems.unshift("Library Chart.js (shared/chart.umd.js) gagal dimuat — grafik tren riwayat petugas tidak akan tampil.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[report-progres-harian] memakai data contoh —", reason);
+      document.getElementById("demoBannerText").textContent =
+        "Supabase belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.";
+      const fb = window.FALLBACK_DATA.petugasProgresHarian;
+      renderAll(fb.ppl, fb.pml, "Data contoh — Supabase belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — Supabase belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadData();
+        const snapshot = JSON.stringify(data.ppl.length) + "|" + JSON.stringify(data.pml.length) + "|" + (data.ppl[data.ppl.length - 1] ? JSON.stringify(data.ppl[data.ppl.length - 1]) : "");
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const sourceLabel = `Supabase (v_progres_ppl_harian &amp; v_progres_pml_harian) &middot; ${data.ppl.length} baris PPL, ${data.pml.length} baris PML terbaca`;
+        renderAll(data.ppl, data.pml, sourceLabel, false);
+        window.setSyncBadge("Diperbarui &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[report-progres-harian] gagal memuat data:", err.message);
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+      useFallback("supabaseUrl / supabaseAnonKey belum diisi di shared-config.js");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report Anomali Pendataan — SE2026 Kota Jakarta Timur</title>
+
+<!-- Penangkap error dini — sama seperti halaman lain, supaya kalau ada
+     file JS yang gagal, pesan errornya langsung tampil sebagai banner
+     merah, tidak perlu buka DevTools. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Dipakai tombol "Export ke Excel" di halaman ini. -->
+<script src="shared/xlsx.full.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus halaman Report Anomali — di luar sistem token bersama,
+     mengikuti pola halaman lain (style per-halaman, bukan global). */
+  main > * + * { margin-top: 32px !important; }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* ---- catatan aturan deteksi, ditaruh di dalam hero ---- */
+  .threshold-note {
+    display: flex; align-items: flex-start; gap: 10px; margin-top: 18px;
+    padding: 10px 14px; border: 1px dashed var(--alert); border-radius: var(--radius);
+    background: var(--alert-soft); font-size: 12.5px; color: var(--ink); flex-wrap: wrap;
+  }
+  .threshold-note .tag {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--alert); border: 1px solid var(--alert); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+    margin-top: 1px;
+  }
+  .threshold-note ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.7; }
+
+  /* ---- toolbar: tab kategori + tab kecamatan + pencarian + toggle + export ---- */
+  .toolbar { display: flex; flex-direction: column; gap: 14px; }
+  .cat-tabs, .kec-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cat-tab, .kec-tab {
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+    cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
+  }
+  .cat-tab:hover, .kec-tab:hover { border-color: var(--ink-soft); color: var(--ink); }
+  .cat-tab.is-active, .kec-tab.is-active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  .cat-tab .n, .kec-tab .n { opacity: 0.7; margin-left: 5px; }
+  .cat-tab.has-anomali:not(.is-active) { border-color: var(--alert); color: var(--alert); }
+
+  .toolbar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+  .toolbar-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .search-field { position: relative; }
+  .search-field input {
+    font-family: var(--font-body); font-size: 13.5px; padding: 9px 12px 9px 12px; width: 220px;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+  }
+  .search-field input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .toggle-field { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+  .toggle-field input { accent-color: var(--alert); width: 15px; height: 15px; cursor: pointer; }
+  .export-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn.small { padding: 8px 14px; font-size: 12.5px; }
+
+  /* ---- panel tabel kategori aktif ---- */
+  .role-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .role-count { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+  .role-count .bad { color: var(--alert); font-weight: 500; }
+
+  table.anomali-table td.num, table.anomali-table th.num { text-align: right; font-family: var(--font-mono); }
+  table.anomali-table td.pct, table.anomali-table th.pct { text-align: right; font-family: var(--font-mono); font-weight: 500; }
+  table.anomali-table tr.row-anomali td { background: var(--alert-soft); }
+  table.anomali-table tr.row-anomali td.pct, table.anomali-table tr.row-anomali td.num.diff { color: var(--alert); font-weight: 500; }
+  table.anomali-table td.name-cell { font-weight: 500; max-width: 200px; }
+  table.anomali-table td, table.anomali-table th { max-width: none; }
+
+  .empty-note { padding: 22px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+
+  .legend-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 12px; color: var(--ink-soft); }
+  .legend-row .status-pill { font-size: 11px; }
+</style>
+</head>
+<body data-page="anomali">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus3" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus3)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Report Anomali Pendataan <span class="num">4 Kategori Aktif</span></h1>
+      <p class="hero-sub">Deteksi kejanggalan data lapangan lintas SLS — hasil pendataan vs acuan Wilkerstat, dan SLS dengan progres 0% — lengkap dengan Nama PPL &amp; PML penanggung jawab per kecamatan.</p>
+      <div class="threshold-note">
+        <span class="tag">Aturan Deteksi</span>
+        <div>
+          <span>Anomali pada tabel di bawah ditandai otomatis berdasarkan aturan berikut (kategori 2-5 sudah difilter di sisi Supabase/view; kategori 1 dihitung di sisi klien — ambang bisa disesuaikan lewat konstanta <code>GAP_PCT_KELUARGA</code> / <code>GAP_PCT_USAHA</code> di kode halaman ini):</span>
+          <ul>
+            <li><strong>Hasil vs Wilkerstat</strong> — SubSLS dengan hasil pendataan keluarga/usaha kosong padahal Wilkerstat mencatat ada, Wilkerstat kosong padahal ada hasil pendataan, atau selisih di luar <span id="thresholdLabel">±20%</span> dari acuan Wilkerstat.</li>
+            <li><em>SLS Progres 0 — sementara dinonaktifkan (data di sumbernya masih dicek ulang).</em></li>
+            <li><strong>Muatan Ekonomi 0</strong> — SLS bermuatan usaha/ekonomi menurut Wilkerstat, namun progres pendataannya 0%.</li>
+            <li><strong>SLS Elit Progres 0</strong> — SLS permukiman elit dengan progres pendataan 0%.</li>
+            <li><strong>SLS Biasa Progres 0</strong> — SLS permukiman biasa dengan progres pendataan 0%.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Supabase belum terbaca — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KPI STRIP ============================= -->
+  <section aria-label="Ringkasan se-Kota Jakarta Timur">
+    <p class="section-label">Ringkasan &middot; se-Kota Jakarta Timur</p>
+    <div class="kpi-strip reveal" id="kpiStrip"></div>
+  </section>
+
+  <!-- ============================= TOOLBAR ============================= -->
+  <section class="panel reveal">
+    <div class="toolbar">
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih kategori anomali</p>
+        <div class="cat-tabs" id="catTabs"></div>
+      </div>
+      <div>
+        <p class="section-label" style="margin-bottom:8px;">Pilih kecamatan</p>
+        <div class="kec-tabs" id="kecTabs"></div>
+      </div>
+      <div class="toolbar-row">
+        <div class="toolbar-controls">
+          <div class="search-field">
+            <input type="text" id="searchInput" placeholder="Cari nama SLS / kelurahan&hellip;" autocomplete="off">
+          </div>
+          <label class="toggle-field">
+            <input type="checkbox" id="onlyAnomaliToggle" checked>
+            Hanya tampilkan anomali
+          </label>
+        </div>
+        <div class="export-group">
+          <button class="btn secondary small" id="btnExportKategori">Export Kategori Ini (Excel)</button>
+          <button class="btn small" id="btnExportAll">Export Semua Kategori (Excel)</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= TABEL KATEGORI AKTIF ============================= -->
+  <section class="panel reveal">
+    <div class="role-panel-head">
+      <div>
+        <h2 class="panel-title" id="panelTitle">Muatan Ekonomi</h2>
+        <p class="panel-desc" id="panelDesc">Perbandingan prelist vs assignment per SLS bermuatan ekonomi.</p>
+      </div>
+      <span class="role-count" id="rowCount"></span>
+    </div>
+    <div class="table-scroll" id="tableWrap" style="max-height:560px;"></div>
+    <div class="legend-row" id="legendRow"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  // -----------------------------------------------------------------------
+  // ATURAN DETEKSI ANOMALI — REVISI 2 Agu 2026 (sore). Kategori 2-5 sudah
+  // difilter di sisi Supabase (nama view berakhiran "_nol"), jadi SEMUA
+  // baris yang dikembalikan otomatis dianggap anomali di sini — tidak ada
+  // ambang untuk dihitung ulang. Kategori 1 (Hasil vs Wilkerstat) BELUM
+  // difilter di view (mengembalikan SEMUA SubSLS), jadi ambangnya dihitung
+  // di klien dengan 2 konstanta di bawah — GANTI angka ini saja kalau
+  // definisinya berubah (dipakai di seluruh halaman: badge tabel, highlight
+  // baris, KPI, & file Excel).
+  // -----------------------------------------------------------------------
+  const GAP_PCT_KELUARGA = 20;  // |selisih_keluarga| / jumlah_kk_wilkerstat * 100 > ini -> anomali
+  const GAP_PCT_USAHA = 20;     // |selisih_usaha| / jumlah_usaha_wilkerstat * 100 > ini -> anomali
+
+  // Definisi 5 kategori tampilan — 1:1 dengan 5 view Supabase (lihat
+  // shared-config.js -> supabaseTables.anomali).
+  //   "hasilVsWilkerstat" : semua SubSLS, status dihitung di klien.
+  //   "progresNol"        : v_anomali_2 (punya kolom prelist), sudah difilter di view.
+  //   "muatanEkonomiNol"  : v_anomali_3, sudah difilter di view.
+  //   "progresNolTipe"    : v_anomali_4/5 (elit/biasa, tanpa prelist), sudah difilter di view.
+  const CATEGORIES = [
+    { key: "hasilVsWilkerstat", label: "Hasil vs Wilkerstat", kind: "hasilVsWilkerstat",
+      desc: "Perbandingan hasil pendataan (bukan prelist) dengan data acuan Wilkerstat per SubSLS." },
+    // DINONAKTIFKAN SEMENTARA (2 Agu 2026) — data di view v_anomali_2_sls_progres_nol
+    // masih salah menurut pengecekan manual ke data asli. JANGAN diaktifkan lagi
+    // sebelum view/data-nya diperbaiki di Supabase. Uncomment blok di bawah untuk
+    // mengaktifkan lagi setelah datanya sudah benar.
+    // { key: "slsProgresNol", label: "SLS Progres 0", kind: "progresNol",
+    //   desc: "SLS dengan assignment ada, tapi progres pendataan masih 0%." },
+    { key: "muatanEkonomiNol", label: "Muatan Ekonomi 0", kind: "muatanEkonomiNol",
+      desc: "SLS bermuatan usaha/ekonomi menurut Wilkerstat, dengan progres pendataan 0%." },
+    { key: "elitProgresNol", label: "SLS Elit Progres 0", kind: "progresNolTipe",
+      desc: "SLS permukiman elit dengan progres pendataan 0%." },
+    { key: "biasaProgresNol", label: "SLS Biasa Progres 0", kind: "progresNolTipe",
+      desc: "SLS permukiman biasa dengan progres pendataan 0%." }
+  ];
+
+  let state = {
+    data: { hasilVsWilkerstat: [], slsProgresNol: [], muatanEkonomiNol: [], elitProgresNol: [], biasaProgresNol: [] },
+    activeCat: "hasilVsWilkerstat",
+    activeKec: "Semua Kecamatan",
+    search: "",
+    onlyAnomali: true
+  };
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function signed(n) { n = Number(n) || 0; return (n > 0 ? "+" : "") + fmt(n); }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(e => io.observe(e));
+  }
+
+  // ---------------------------------------------------------------------
+  // STATUS ANOMALI — satu fungsi per jenis view, dipakai ulang di render,
+  // KPI, dan export supaya definisinya konsisten di seluruh halaman.
+  // ---------------------------------------------------------------------
+  function statusHasilVsWilkerstat(r) {
+    const kkWil = r.jumlahKkWilkerstat, hasilKel = r.hasilPendataanKeluarga;
+    const usahaWil = r.jumlahUsahaWilkerstat, hasilUsaha = r.hasilUsahaTotal;
+    if (kkWil > 0 && hasilKel === 0) return { code: "keluarga_kosong", label: "Belum Ada Hasil Keluarga", isAnomali: true };
+    if (kkWil === 0 && hasilKel > 0) return { code: "wilkerstat_keluarga_kosong", label: "Wilkerstat Keluarga Kosong", isAnomali: true };
+    if (usahaWil > 0 && hasilUsaha === 0) return { code: "usaha_kosong", label: "Belum Ada Hasil Usaha", isAnomali: true };
+    if (usahaWil === 0 && hasilUsaha > 0) return { code: "wilkerstat_usaha_kosong", label: "Wilkerstat Usaha Kosong", isAnomali: true };
+    const pctKel = kkWil > 0 ? Math.abs(r.selisihKeluarga) / kkWil * 100 : 0;
+    const pctUsaha = usahaWil > 0 ? Math.abs(r.selisihUsaha) / usahaWil * 100 : 0;
+    if (pctKel > GAP_PCT_KELUARGA) return { code: "selisih_keluarga", label: "Selisih Keluarga > " + GAP_PCT_KELUARGA + "%", isAnomali: true };
+    if (pctUsaha > GAP_PCT_USAHA) return { code: "selisih_usaha", label: "Selisih Usaha > " + GAP_PCT_USAHA + "%", isAnomali: true };
+    return { code: "wajar", label: "Wajar", isAnomali: false };
+  }
+
+  // Kategori 2-5: view sudah difilter server-side (nama berakhiran "_nol"),
+  // jadi SETIAP baris yang sampai di klien memang anomali.
+  function statusSudahDifilter(label) {
+    return { code: "nol", label: label, isAnomali: true };
+  }
+
+  function statusForRow(cat, row) {
+    if (cat.kind === "hasilVsWilkerstat") return statusHasilVsWilkerstat(row);
+    if (cat.kind === "muatanEkonomiNol") return statusSudahDifilter("Muatan Ekonomi 0");
+    return statusSudahDifilter("Progres 0%"); // progresNol & progresNolTipe
+  }
+
+  function datasetForCat(catKey) {
+    return state.data[catKey] || [];
+  }
+
+  // ---------------------------------------------------------------------
+  // KPI STRIP — selalu dihitung dari SELURUH data (tidak terpengaruh
+  // filter kategori/kecamatan aktif), supaya jadi angka acuan tetap.
+  // ---------------------------------------------------------------------
+  function anomaliCountForCat(catKey) {
+    const cat = CATEGORIES.find(c => c.key === catKey);
+    return datasetForCat(catKey).filter(r => statusForRow(cat, r).isAnomali).length;
+  }
+
+  function renderKpiStrip() {
+    const totalBaris = CATEGORIES.reduce((s, c) => s + datasetForCat(c.key).length, 0);
+    const totalAnomali = CATEGORIES.reduce((s, c) => s + anomaliCountForCat(c.key), 0);
+    const cells = [
+      { value: fmt(totalBaris), label: "Total baris diperiksa (5 kategori)" },
+      { value: fmt(totalAnomali), label: "Total baris anomali", accentClass: totalAnomali ? "alert" : "" }
+    ];
+    CATEGORIES.forEach(c => {
+      const n = anomaliCountForCat(c.key);
+      cells.push({ value: fmt(n), label: c.label, accentClass: n ? "alert" : "" });
+    });
+    document.getElementById("kpiStrip").innerHTML = cells.map(c => `
+      <div class="kpi-cell">
+        <div class="kpi-value ${c.accentClass || ""}">${c.value}</div>
+        <div class="kpi-label">${c.label}</div>
+      </div>`).join("");
+  }
+
+  // ---------------------------------------------------------------------
+  // TAB KATEGORI
+  // ---------------------------------------------------------------------
+  function renderCatTabs() {
+    const mount = document.getElementById("catTabs");
+    mount.innerHTML = CATEGORIES.map(c => {
+      const n = anomaliCountForCat(c.key);
+      const cls = ["cat-tab"];
+      if (c.key === state.activeCat) cls.push("is-active");
+      if (n > 0) cls.push("has-anomali");
+      return `<button type="button" class="${cls.join(" ")}" data-cat="${c.key}">${c.label}<span class="n">${n} anomali</span></button>`;
+    }).join("");
+    mount.querySelectorAll(".cat-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeCat = btn.getAttribute("data-cat");
+        state.activeKec = "Semua Kecamatan";
+        renderCatTabs();
+        renderKecTabs();
+        applyFilters();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // TAB KECAMATAN — daftar kecamatan dibangun dari dataset kategori aktif
+  // ---------------------------------------------------------------------
+  function kecListFor(rows) {
+    const set = new Set();
+    rows.forEach(r => r.kecamatan && set.add(r.kecamatan));
+    return ["Semua Kecamatan", ...Array.from(set).sort((a, b) => a.localeCompare(b, "id"))];
+  }
+
+  function renderKecTabs() {
+    const rows = datasetForCat(state.activeCat);
+    const kecList = kecListFor(rows);
+    if (kecList.indexOf(state.activeKec) === -1) state.activeKec = "Semua Kecamatan";
+    const mount = document.getElementById("kecTabs");
+    mount.innerHTML = kecList.map(k => {
+      const isAll = k === "Semua Kecamatan";
+      const count = isAll ? rows.length : rows.filter(r => r.kecamatan === k).length;
+      const cls = ["kec-tab"];
+      if (k === state.activeKec) cls.push("is-active");
+      return `<button type="button" class="${cls.join(" ")}" data-kec="${encodeURIComponent(k)}">${k}<span class="n">${count}</span></button>`;
+    }).join("");
+    mount.querySelectorAll(".kec-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeKec = decodeURIComponent(btn.getAttribute("data-kec"));
+        renderKecTabs();
+        applyFilters();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // FILTER + TABEL
+  // ---------------------------------------------------------------------
+  function matchesSearch(text) {
+    if (!state.search.trim()) return true;
+    return String(text || "").toLowerCase().includes(state.search.trim().toLowerCase());
+  }
+
+  function filteredRows(cat) {
+    let rows = datasetForCat(cat.key).map(r => Object.assign({}, r, { _status: statusForRow(cat, r) }));
+    if (state.activeKec !== "Semua Kecamatan") rows = rows.filter(r => r.kecamatan === state.activeKec);
+    if (state.search.trim()) {
+      rows = rows.filter(r => matchesSearch(r.namaSls) || matchesSearch(r.kelurahan) || matchesSearch(r.namaPpl) || matchesSearch(r.namaPml));
+    }
+    if (state.onlyAnomali) rows = rows.filter(r => r._status.isAnomali);
+    return rows.slice().sort((a, b) => {
+      if (a._status.isAnomali !== b._status.isAnomali) return a._status.isAnomali ? -1 : 1;
+      const kel = String(a.kelurahan || "").localeCompare(String(b.kelurahan || ""), "id");
+      if (kel !== 0) return kel;
+      return String(a.namaSls || "").localeCompare(String(b.namaSls || ""), "id");
+    });
+  }
+
+  function statusBadge(st) {
+    const cls = st.isAnomali ? "err" : "ok";
+    return `<span class="status-pill ${cls}">${st.label}</span>`;
+  }
+
+  // ---- Kolom tabel per jenis kategori — pusat tunggal dipakai baik oleh
+  // render tabel di layar maupun export Excel, supaya keduanya konsisten. ----
+  function columnsFor(cat) {
+    const common = [
+      { label: "Kelurahan", key: "kelurahan", cell: r => r.kelurahan || "—", cls: "name-cell" },
+      { label: "SLS", key: "namaSls", cell: r => r.namaSls || r.idSubsls || "(tanpa nama)", cls: "name-cell" },
+      { label: "PPL", key: "namaPpl", cell: r => r.namaPpl || "—", cls: "name-cell" },
+      { label: "PML", key: "namaPml", cell: r => r.namaPml || "—", cls: "name-cell" }
+    ];
+    if (cat.kind === "hasilVsWilkerstat") {
+      return common.concat([
+        { label: "KK Wilkerstat", key: "jumlahKkWilkerstat", cell: r => fmt(r.jumlahKkWilkerstat), num: true },
+        { label: "Bangunan BSTT Wilkerstat", key: "jumlahBsttWilkerstat", cell: r => fmt(r.jumlahBsttWilkerstat), num: true },
+        { label: "Hasil Keluarga", key: "hasilPendataanKeluarga", cell: r => fmt(r.hasilPendataanKeluarga), num: true },
+        { label: "Selisih Keluarga", key: "selisihKeluarga", cell: r => signed(r.selisihKeluarga), num: true },
+        { label: "Usaha Wilkerstat", key: "jumlahUsahaWilkerstat", cell: r => fmt(r.jumlahUsahaWilkerstat), num: true },
+        { label: "Hasil Usaha", key: "hasilUsahaTotal", cell: r => fmt(r.hasilUsahaTotal), num: true },
+        { label: "Selisih Usaha", key: "selisihUsaha", cell: r => signed(r.selisihUsaha), num: true },
+        { label: "Status", key: "_status", cell: r => statusBadge(r._status) }
+      ]);
+    }
+    if (cat.kind === "progresNol") {
+      return common.concat([
+        { label: "Prelist", key: "prelist", cell: r => fmt(r.prelist), num: true },
+        { label: "Assignment", key: "assignment", cell: r => fmt(r.assignment), num: true },
+        { label: "Open (Belum Selesai)", key: "open", cell: r => fmt(r.open), num: true },
+        { label: "Status", key: "_status", cell: r => statusBadge(r._status) }
+      ]);
+    }
+    if (cat.kind === "progresNolTipe") {
+      return common.concat([
+        { label: "Jenis Muatan Dominan", key: "jenisMuatanDominan", cell: r => r.jenisMuatanDominan || "—" },
+        { label: "Assignment", key: "assignment", cell: r => fmt(r.assignment), num: true },
+        { label: "Open (Belum Selesai)", key: "open", cell: r => fmt(r.open), num: true },
+        { label: "Status", key: "_status", cell: r => statusBadge(r._status) }
+      ]);
+    }
+    // muatanEkonomiNol
+    return common.concat([
+      { label: "Usaha Wilkerstat", key: "jumlahUsahaWilkerstat", cell: r => fmt(r.jumlahUsahaWilkerstat), num: true },
+      { label: "Muatan Wilkerstat", key: "jumlahMuatanWilkerstat", cell: r => fmt(r.jumlahMuatanWilkerstat), num: true },
+      { label: "Jenis Muatan Dominan", key: "jenisMuatanDominan", cell: r => r.jenisMuatanDominan || "—" },
+      { label: "Status", key: "_status", cell: r => statusBadge(r._status) }
+    ]);
+  }
+
+  function renderTable(cat, rows, showKecCol) {
+    const wrap = document.getElementById("tableWrap");
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="empty-note">Tidak ada baris yang cocok dengan filter saat ini.</div>`;
+      return;
+    }
+    const cols = columnsFor(cat);
+    const kecTh = showKecCol ? "<th>Kecamatan</th>" : "";
+    const theadRest = cols.map(c => `<th${c.num ? ' class="num"' : ""}>${c.label}</th>`).join("");
+    const rowsHtml = rows.map(r => {
+      const kecTd = showKecCol ? `<td>${r.kecamatan || "—"}</td>` : "";
+      const cellsHtml = cols.map(c => {
+        const cls = [c.cls || "", c.num ? "num" : ""].filter(Boolean).join(" ");
+        return `<td${cls ? ` class="${cls}"` : ""}>${c.cell(r)}</td>`;
+      }).join("");
+      const rowCls = r._status.isAnomali ? "row-anomali" : "";
+      return `<tr class="${rowCls}">${kecTd}${cellsHtml}</tr>`;
+    }).join("");
+    wrap.innerHTML = `
+      <table class="data-table anomali-table">
+        <thead><tr>${kecTh}${theadRest}</tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  const LEGEND = {
+    hasilVsWilkerstat: [["ok", "Wajar"], ["err", "Selisih di luar ambang / salah satu sisi kosong"]],
+    progresNol: [["err", "Progres 0% (assignment ada, belum ada yang selesai)"]],
+    progresNolTipe: [["err", "Progres 0% (assignment ada, belum ada yang selesai)"]],
+    muatanEkonomiNol: [["err", "Ada muatan usaha/ekonomi menurut Wilkerstat, progres 0%"]]
+  };
+
+  function renderLegend(kind) {
+    const items = LEGEND[kind] || [];
+    document.getElementById("legendRow").innerHTML = items.map(([cls, label]) =>
+      `<span><span class="status-pill ${cls}">${label}</span></span>`).join("");
+  }
+
+  function applyFilters() {
+    const cat = CATEGORIES.find(c => c.key === state.activeCat);
+    const showKecCol = state.activeKec === "Semua Kecamatan";
+    document.getElementById("panelTitle").textContent = cat.label;
+
+    const rows = filteredRows(cat);
+    const total = datasetForCat(cat.key).length;
+    const anomaliCount = anomaliCountForCat(cat.key);
+    renderTable(cat, rows, showKecCol);
+    renderLegend(cat.kind);
+
+    const kecSuffix = state.activeKec === "Semua Kecamatan" ? "se-Kota Jakarta Timur" : `Kecamatan ${state.activeKec}`;
+    document.getElementById("panelDesc").textContent = `${cat.desc} ${kecSuffix}.`;
+    document.getElementById("rowCount").innerHTML = `${fmt(rows.length)} ditampilkan dari ${fmt(total)} baris` +
+      (anomaliCount ? ` &middot; <span class="bad">${fmt(anomaliCount)} anomali</span>` : "");
+  }
+
+  // ---------------------------------------------------------------------
+  // EXPORT KE EXCEL
+  // ---------------------------------------------------------------------
+  function sheetSafeName(name) {
+    return String(name).replace(/[:\\/?*\[\]]/g, "").slice(0, 31);
+  }
+
+  function exportRowsFor(catKey) {
+    const cat = CATEGORIES.find(c => c.key === catKey);
+    const cols = columnsFor(cat).filter(c => c.key !== "_status");
+    return datasetForCat(catKey).map(r => {
+      const st = statusForRow(cat, r);
+      const row = { "Kecamatan": r.kecamatan, "PPL": r.namaPpl, "Email PPL": r.emailPpl, "PML": r.namaPml, "Email PML": r.emailPml };
+      cols.forEach(c => {
+        if (c.key === "kelurahan" || c.key === "namaPpl" || c.key === "namaPml") return; // sudah di atas / duplikat
+        row[c.label] = r[c.key];
+      });
+      row["Kelurahan"] = r.kelurahan;
+      row["Status Anomali"] = st.label;
+      return row;
+    });
+  }
+
+  function addSheet(wb, rows, sheetName) {
+    if (!rows.length) { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Tidak ada data"]]), sheetSafeName(sheetName)); return; }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = Object.keys(rows[0]).map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, ws, sheetSafeName(sheetName));
+  }
+
+  function todayStamp() {
+    return new Date().toLocaleDateString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit" }).split("/").reverse().join("-");
+  }
+
+  function exportKategoriExcel() {
+    const cat = CATEGORIES.find(c => c.key === state.activeCat);
+    const wb = XLSX.utils.book_new();
+    addSheet(wb, exportRowsFor(cat.key), cat.label);
+    XLSX.writeFile(wb, `Report_Anomali_${sheetSafeName(cat.label)}_${todayStamp()}.xlsx`);
+  }
+
+  function buildRingkasanSheet(wb) {
+    const rows = CATEGORIES.map(c => ({
+      "Kategori": c.label,
+      "Total Baris": datasetForCat(c.key).length,
+      "Jumlah Anomali": anomaliCountForCat(c.key)
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Ringkasan");
+  }
+
+  function exportAllExcel() {
+    const wb = XLSX.utils.book_new();
+    buildRingkasanSheet(wb);
+    CATEGORIES.forEach(c => addSheet(wb, exportRowsFor(c.key), c.label));
+    XLSX.writeFile(wb, `Report_Anomali_Pendataan_Semua_${todayStamp()}.xlsx`);
+  }
+
+  // ---------------------------------------------------------------------
+  // MUAT DATA
+  // ---------------------------------------------------------------------
+  function renderAll(data, sourceLabel, isDemo) {
+    state.data = data;
+    renderKpiStrip();
+    renderCatTabs();
+    renderKecTabs();
+    applyFilters();
+
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+    document.getElementById("demoBanner").classList.toggle("is-visible", !!isDemo);
+  }
+
+  async function loadData() {
+    const cfg = window.APP_CONFIG;
+    if (cfg.dataSource !== "supabase") {
+      throw new Error('dataSource bukan "supabase" — Report Anomali Pendataan hanya membaca dari view Supabase (tidak ada padanan di Google Sheets lama).');
+    }
+    return window.SupabaseEngine.fetchAnomaliPendataanSupabase();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    document.getElementById("searchInput").addEventListener("input", (e) => { state.search = e.target.value; applyFilters(); });
+    document.getElementById("onlyAnomaliToggle").addEventListener("change", (e) => { state.onlyAnomali = e.target.checked; applyFilters(); });
+    document.getElementById("btnExportKategori").addEventListener("click", exportKategoriExcel);
+    document.getElementById("btnExportAll").addEventListener("click", exportAllExcel);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.XLSX) {
+      problems.unshift("Library SheetJS (shared/xlsx.full.min.js) gagal dimuat — tombol Export ke Excel tidak akan berfungsi.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[report-anomali] memakai data contoh —", reason);
+      document.getElementById("demoBannerText").textContent =
+        "Supabase belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.";
+      const fb = window.FALLBACK_DATA.anomaliPendataan;
+      renderAll(fb, "Data contoh — Supabase belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — Supabase belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadData();
+        const snapshot = CATEGORIES.map(c => JSON.stringify(data[c.key].length)).join("|");
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const totalBaris = CATEGORIES.reduce((s, c) => s + data[c.key].length, 0);
+        const sourceLabel = `Supabase (view anomali_1..5) &middot; ${totalBaris} baris terbaca`;
+        renderAll(data, sourceLabel, false);
+        window.setSyncBadge("Diperbarui &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[report-anomali] gagal memuat data:", err.message);
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+      useFallback("supabaseUrl / supabaseAnonKey belum diisi di shared-config.js");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>

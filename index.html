@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Progres Pendataan SE2026 Kota Jakarta Timur — Sumber data: Fasih-SM</title>
+
+<!-- Penangkap error dini — HARUS jadi script pertama di <head>, sebelum
+     script lain (termasuk shared-config.js) supaya bisa menangkap error
+     parsing/eksekusi dari file manapun. Tujuannya: kalau ada file JS yang
+     gagal (mis. shared-config.js rusak/salah kutip), pesan errornya
+     langsung tampil di halaman sebagai banner merah — tidak perlu buka
+     DevTools/Console sama sekali. -->
+<script>
+  window.__DASHBOARD_ERRORS = [];
+  window.addEventListener("error", function (e) {
+    var src = e.filename ? e.filename.split("/").pop() : "?";
+    window.__DASHBOARD_ERRORS.push(src + ":" + (e.lineno || "?") + " — " + (e.message || "Error tidak diketahui"));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+    window.__DASHBOARD_ERRORS.push("Promise gagal — " + msg);
+  });
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="shared/chart.umd.js"></script>
+<!-- Dipakai hanya kalau APP_CONFIG.dataSource === "supabase" (lihat shared-config.js).
+     Aman tetap dimuat saat mode "gviz" — shared-supabase-loader.js baru benar-benar
+     dipanggil (dan baru butuh kredensial valid) di dalam loadFromSheet() di bawah. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<link rel="stylesheet" href="shared/shared-style.css">
+<style>
+  /* Gaya khusus Halaman Utama — di luar sistem token bersama, supaya
+     halaman lain (update-data.html) tidak ikut terpengaruh. */
+  .track-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 20px; }
+  @media (max-width: 980px) { .track-row3 { grid-template-columns: 1fr; } }
+
+  /* KPI strip Halaman Utama sekarang cuma 4 kartu (bukan 6 seperti default
+     shared-style.css) — di-override di sini saja supaya halaman lain yang
+     mungkin masih pakai kpi-strip 6-kartu tidak ikut berubah. */
+  #kpiStrip.kpi-strip { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { #kpiStrip.kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 900px) { #kpiStrip.kpi-cell:nth-child(3n) { border-right: 1px solid var(--line); } }
+  @media (max-width: 900px) { #kpiStrip .kpi-cell:nth-child(2n) { border-right: none; } }
+  #kpiStrip .kpi-cell:last-child { border-right: none; }
+
+  .comp-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 18px; }
+  @media (max-width: 900px) { .comp-tables { grid-template-columns: 1fr; } }
+  .comp-block h3 {
+    font-family: var(--font-display); font-size: 16px; font-weight: 600; margin: 0 0 12px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  }
+  .comp-block h3 span.tot { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-soft); font-weight: 400; }
+  .comp-line { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-top: 1px solid var(--line-soft); font-size: 13.5px; }
+  .comp-line:first-of-type { border-top: none; }
+  .comp-line .label { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+  .comp-line .val { font-family: var(--font-mono); font-size: 14px; color: var(--ink); font-weight: 500; }
+  .comp-line.flag .label { color: var(--alert); }
+  .comp-line.flag .val { color: var(--alert); }
+
+  .hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .live-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft);
+  }
+
+  /* footer ringkas, satu baris, sumber data & timestamp — pengganti section catatan */
+  .footer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .footer-sep { color: var(--ink-faint); }
+  #footerSource { font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* jarak antar-section dibuat konsisten, satu skala 32px, biar tidak berantakan */
+  main > * + * { margin-top: 32px !important; }
+  /* Baris "Distribusi status dokumen" vs "Peta progres kecamatan" — dibuat
+     sama tinggi (stretch) supaya tidak ada satu kotak lebih pendek/kosong
+     dari yang lain, dan grafik mengisi ruang yang tersedia secara wajar. */
+  .panel-row { align-items: stretch; }
+  .panel-row .panel { display: flex; flex-direction: column; }
+  .chart-wrap { position: relative; flex: 1; min-height: 300px; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+  .kec-grid { align-content: start; }
+
+  /* legenda kecil untuk grafik 10 kecamatan, menjelaskan arti warna */
+  .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; font-size: 12px; color: var(--ink-soft); }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chart-legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+</style>
+</head>
+<body data-page="beranda">
+
+<div id="jsErrorBanner" style="display:none; background:#BC4B2C; color:#fff; font:13px/1.5 monospace; padding:10px 16px; white-space:pre-wrap;"></div>
+
+<header id="appHeader"></header>
+
+<main>
+
+  <!-- ============================= HERO ============================= -->
+  <section class="hero">
+    <svg class="hero-grid-bg" viewBox="0 0 1180 220" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <pattern id="blokSensus" width="22" height="22" patternUnits="userSpaceOnUse">
+          <rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="#151E30" stroke-opacity="0.08" stroke-width="1"></rect>
+        </pattern>
+      </defs>
+      <rect width="1180" height="220" fill="url(#blokSensus)"></rect>
+    </svg>
+    <div class="hero-content">
+      <div class="hero-eyebrow-row">
+        <p class="hero-eyebrow">Sensus Ekonomi 2026 &middot; Kota Administrasi Jakarta Timur</p>
+        <span class="live-chip"><span class="dot ok"></span> <span id="heroClock">—</span></span>
+      </div>
+      <h1 class="hero-thesis">Progres Pendataan SE2026 Kota Jakarta Timur, <span class="num">Sumber data : Fasih-SM</span></h1>
+      <p class="hero-sub">Progres tanpa Draft dihitung dari status dokumen (selain OPEN &amp; DRAFT) dibagi jumlah assignment yang sudah dialokasikan, mengikuti definisi resmi Laporan Harian SE2026. Dihitung otomatis dari tab <strong>Sheet1</strong> di Google Sheet setiap sesi.</p>
+    </div>
+  </section>
+
+  <!-- ==================== BANNER MODE DEMO (tersembunyi default) ==================== -->
+  <div class="demo-banner" id="demoBanner">
+    <b>Mode demo</b>
+    <span id="demoBannerText">Sumber data belum terbaca — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.</span>
+  </div>
+
+  <!-- ============================= KPI ============================= -->
+  <section class="kpi-strip reveal" id="kpiStrip" aria-label="Ringkasan angka utama">
+    <div class="kpi-cell">
+      <div class="kpi-value" id="kpiPrelist">—</div>
+      <div class="kpi-label">Prelist awal</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-value" id="kpiAssignment">—</div>
+      <div class="kpi-label">Assignment sudah dialokasikan</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-value accent" id="kpiProgresB">—</div>
+      <div class="kpi-label">Progres FASIH &middot; tanpa DRAFT</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-value" id="kpiProgresC">—</div>
+      <div class="kpi-label">Progres FASIH &middot; termasuk DRAFT</div>
+    </div>
+  </section>
+
+  <!-- ======================= TIGA JALUR PENDATAAN ==================== -->
+  <section aria-label="Tiga jalur pendataan SE2026">
+    <p class="section-label" style="margin-top:28px;">Jalur pendataan usaha &amp; rumah tangga</p>
+    <div class="track-row3">
+      <div class="track-card reveal">
+        <div class="track-head">
+          <span class="track-name">Usaha (BKU + Keluarga)</span>
+          <span class="track-pct" id="trackUsahaPct">—</span>
+        </div>
+        <div class="track-bar-track"><div class="track-bar-fill" id="trackUsahaBar" style="width:0%"></div></div>
+        <div class="track-foot">
+          <span id="trackUsahaTerdata">terdata —</span>
+          <span id="trackUsahaTarget">target —</span>
+        </div>
+      </div>
+      <div class="track-card reveal">
+        <div class="track-head">
+          <span class="track-name">Rumah tangga (Keluarga)</span>
+          <span class="track-pct teal" id="trackKlgPct">—</span>
+        </div>
+        <div class="track-bar-track"><div class="track-bar-fill teal" id="trackKlgBar" style="width:0%"></div></div>
+        <div class="track-foot">
+          <span id="trackKlgTerdata">terdata —</span>
+          <span id="trackKlgTarget">target —</span>
+        </div>
+      </div>
+      <div class="track-card reveal">
+        <div class="track-head">
+          <span class="track-name">Usaha dalam keluarga</span>
+          <span class="track-pct teal" id="trackUsahaKlgPct">—</span>
+        </div>
+        <div class="track-bar-track"><div class="track-bar-fill teal" id="trackUsahaKlgBar" style="width:0%"></div></div>
+        <div class="track-foot">
+          <span id="trackUsahaKlgTerdata">terdata —</span>
+          <span id="trackUsahaKlgTarget">prelist keluarga —</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= STATUS + PETA KECAMATAN ==================== -->
+  <section class="panel-row">
+    <div class="panel reveal">
+      <h2 class="panel-title">Distribusi status dokumen</h2>
+      <p class="panel-desc">Jumlah akumulasi per status alur kerja, dijumlahkan dari seluruh baris SLS pada tab Sheet1.</p>
+      <div class="chart-wrap">
+        <canvas id="statusChart" role="img" aria-label="Grafik distribusi status pendataan SLS"></canvas>
+      </div>
+    </div>
+
+    <div class="panel reveal">
+      <div class="panel-head-row">
+        <div>
+          <h2 class="panel-title">Peta progres per kecamatan</h2>
+          <p class="panel-desc" id="kecPanelDesc">Progres FASIH tanpa Draft, dikelompokkan per kecamatan. "Tidak Diketahui" ditampilkan terpisah di bawah grid.</p>
+        </div>
+        <div class="seg-toggle" id="kecToggle" role="group" aria-label="Pilih definisi progres peta kecamatan">
+          <button type="button" data-metric="B" class="is-active">Tanpa Draft</button>
+          <button type="button" data-metric="C">Termasuk Draft</button>
+        </div>
+      </div>
+      <div class="kec-grid" id="kecGrid"></div>
+      <div class="unknown-strip" id="unknownStrip" style="display:none;"></div>
+    </div>
+  </section>
+
+  <!-- ======================= GRAFIK PROGRES 10 KECAMATAN (TERMASUK DRAFT) ==================== -->
+  <section class="panel reveal">
+    <h2 class="panel-title">Grafik progres 10 kecamatan &middot; termasuk Draft</h2>
+    <p class="panel-desc">Progres FASIH termasuk Draft untuk seluruh 10 kecamatan di Kota Administrasi Jakarta Timur, diurutkan dari yang tertinggi. Baris "Tidak Diketahui" tidak diikutsertakan.</p>
+    <div class="chart-wrap" style="min-height:260px;">
+      <canvas id="kecChart" role="img" aria-label="Grafik progres termasuk Draft per 10 kecamatan"></canvas>
+    </div>
+    <div class="chart-legend">
+      <span><span class="sw" style="background:var(--teal);"></span>Capaian tertinggi</span>
+      <span><span class="sw" style="background:var(--gold);"></span>Capaian menengah</span>
+      <span><span class="sw" style="background:var(--alert);"></span>Perlu perhatian</span>
+    </div>
+  </section>
+
+  <!-- ======================= PERINGKAT CEPAT ==================== -->
+  <section class="panel-row">
+    <div class="panel reveal">
+      <h2 class="panel-title">5 Kecamatan Tercepat</h2>
+      <p class="panel-desc">Berdasarkan definisi yang sedang dipilih di peta kecamatan. "Tidak Diketahui" tidak diikutsertakan, sesuai catatan kaki Laporan Harian resmi.</p>
+      <ul class="rank-list" id="rankTop"></ul>
+    </div>
+    <div class="panel reveal">
+      <h2 class="panel-title">5 Kecamatan Tertinggal</h2>
+      <p class="panel-desc">Kandidat prioritas percepatan &amp; pendampingan lapangan (garis merah di kiri sel).</p>
+      <ul class="rank-list" id="rankBottom"></ul>
+    </div>
+  </section>
+
+  <!-- ======================= KOMPOSISI CAPAIAN USAHA ==================== -->
+  <section class="panel reveal">
+    <h2 class="panel-title">Komposisi capaian usaha</h2>
+    <p class="panel-desc">Dipisah antara jalur BKU (prelist usaha) dan jalur Keluarga (usaha dalam rumah tangga) — tidak lagi digabung, supaya bendera kualitas data per jalur tetap terbaca jelas.</p>
+    <div class="comp-tables">
+      <div class="comp-block">
+        <h3>Usaha BKU <span class="tot" id="compBkuTotal"></span></h3>
+        <div class="comp-line"><span class="label"><span class="swatch" style="background:var(--teal);"></span>Ditemukan sesuai prelist</span><span class="val" id="compBkuDitemukan">—</span></div>
+        <div class="comp-line"><span class="label"><span class="swatch" style="background:var(--gold);"></span>Usaha baru</span><span class="val" id="compBkuBaru">—</span></div>
+        <div class="comp-line flag"><span class="label">Usaha tutup</span><span class="val" id="compBkuTutup">—</span></div>
+        <div class="comp-line flag"><span class="label">Usaha ganda (duplikat prelist)</span><span class="val" id="compBkuGanda">—</span></div>
+        <div class="comp-line flag"><span class="label">Prelist tidak ditemukan</span><span class="val" id="compBkuTidakDitemukan">—</span></div>
+      </div>
+      <div class="comp-block">
+        <h3>Usaha dalam Keluarga <span class="tot" id="compKlgTotal"></span></h3>
+        <div class="comp-line"><span class="label"><span class="swatch" style="background:var(--teal);"></span>Ditemukan sesuai prelist</span><span class="val" id="compKlgDitemukan">—</span></div>
+        <div class="comp-line"><span class="label"><span class="swatch" style="background:var(--gold);"></span>Usaha baru</span><span class="val" id="compKlgBaru">—</span></div>
+        <div class="comp-line flag"><span class="label">Usaha tutup</span><span class="val" id="compKlgTutup">—</span></div>
+        <div class="comp-line flag"><span class="label">Usaha ganda (duplikat prelist)</span><span class="val" id="compKlgGanda">—</span></div>
+        <div class="comp-line flag"><span class="label">Prelist tidak ditemukan</span><span class="val" id="compKlgTidakDitemukan">—</span></div>
+      </div>
+    </div>
+  </section>
+
+
+</main>
+
+<footer>
+  <div class="footer-row">
+    <span>Dashboard Pemantauan SE2026 &middot; Kota Administrasi Jakarta Timur</span>
+    <span class="footer-sep">&middot;</span>
+    <span id="footerSource">Memuat sumber data&hellip;</span>
+  </div>
+</footer>
+
+<script src="shared/shared-config.js"></script>
+<script src="shared/shared-fallback-data.js"></script>
+<script src="shared/shared-loader.js"></script>
+<script src="shared/shared-supabase-loader.js"></script>
+<script src="shared/shared-nav.js"></script>
+
+<script>
+(function () {
+  let statusChartInstance = null;
+  let kecChartInstance = null;
+  let currentKecamatan = [];
+  let currentUnknown = null;
+  let currentDef = "B"; // "B" (tanpa draft) | "C" (termasuk draft)
+
+  function fmt(n) { return (Number(n) || 0).toLocaleString("id-ID"); }
+  function fmt1(n) { return (Number(n) || 0).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // ---- animasi hitung naik untuk angka besar, biar halaman terasa hidup ----
+  function animateNumber(el, to, decimals) {
+    if (!el) return;
+    const from = Number(el.dataset.rawVal || 0);
+    const duration = 700;
+    const start = performance.now();
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const val = from + (to - from) * eased;
+      el.textContent = decimals ? fmt1(val) : fmt(Math.round(val));
+      if (t < 1) requestAnimationFrame(step); else el.dataset.rawVal = to;
+    }
+    requestAnimationFrame(step);
+  }
+
+  function tickClock() {
+    const el = document.getElementById("heroClock");
+    if (el) el.textContent = new Date().toLocaleString("id-ID", { weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function setupReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) { els.forEach(e => e.classList.add("is-visible")); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry, i) => {
+        if (entry.isIntersecting) {
+          setTimeout(() => entry.target.classList.add("is-visible"), i * 40);
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.08 });
+    els.forEach(e => io.observe(e));
+  }
+
+  function renderKPI(summary) {
+    animateNumber(document.getElementById("kpiPrelist"), summary.prelist || 0);
+    animateNumber(document.getElementById("kpiAssignment"), summary.assignment || 0);
+    document.getElementById("kpiProgresB").textContent = fmt1(summary.progresExclDraft || 0) + "%";
+    document.getElementById("kpiProgresC").textContent = fmt1(summary.progresInclDraft || 0) + "%";
+  }
+
+  function renderTracks(summary) {
+    const target = summary.target || 0, terdata = summary.terdata || 0;
+    const pctUsaha = Math.max(0, Math.min(100, target > 0 ? Math.round((terdata / target) * 1000) / 10 : 0));
+    document.getElementById("trackUsahaPct").textContent = fmt1(pctUsaha) + "%";
+    document.getElementById("trackUsahaBar").style.width = pctUsaha + "%";
+    document.getElementById("trackUsahaTerdata").textContent = "terdata " + fmt(terdata);
+    document.getElementById("trackUsahaTarget").textContent = "target " + fmt(target);
+
+    const klgTarget = summary.klgPrelist || 0, klgHasil = summary.klgHasil || 0;
+    const klgPct = Math.max(0, Math.min(100, summary.klgPct || 0));
+    document.getElementById("trackKlgPct").textContent = fmt1(klgPct) + "%";
+    document.getElementById("trackKlgBar").style.width = klgPct + "%";
+    document.getElementById("trackKlgTerdata").textContent = "terdata " + fmt(klgHasil);
+    document.getElementById("trackKlgTarget").textContent = "target " + fmt(klgTarget);
+
+    const uk = Math.max(0, Math.min(100, summary.usahaKeluargaPct || 0));
+    document.getElementById("trackUsahaKlgPct").textContent = fmt1(uk) + "%";
+    document.getElementById("trackUsahaKlgBar").style.width = uk + "%";
+    document.getElementById("trackUsahaKlgTerdata").textContent = "terdata " + fmt(summary.usahaKeluargaDidata || 0);
+    document.getElementById("trackUsahaKlgTarget").textContent = "prelist keluarga " + fmt(klgTarget);
+  }
+
+  function renderCompBlock(prefix, data) {
+    const total = (data.ditemukan || 0) + (data.baru || 0);
+    document.getElementById(`comp${prefix}Total`).textContent = "total ditemukan+baru " + fmt(total);
+    document.getElementById(`comp${prefix}Ditemukan`).textContent = fmt(data.ditemukan || 0);
+    document.getElementById(`comp${prefix}Baru`).textContent = fmt(data.baru || 0);
+    document.getElementById(`comp${prefix}Tutup`).textContent = fmt(data.tutup || 0);
+    document.getElementById(`comp${prefix}Ganda`).textContent = fmt(data.ganda || 0);
+    document.getElementById(`comp${prefix}TidakDitemukan`).textContent = fmt(data.tidakDitemukan || 0);
+  }
+
+  function renderCompose(summary) {
+    renderCompBlock("Bku", summary.bku || {});
+    const klg = {
+      ditemukan: (summary.usahaDitemukan || 0) - (summary.bku ? summary.bku.ditemukan || 0 : 0),
+      baru: (summary.usahaBaru || 0) - (summary.bku ? summary.bku.baru || 0 : 0),
+      tutup: (summary.usahaTutup || 0) - (summary.bku ? summary.bku.tutup || 0 : 0),
+      ganda: (summary.usahaGanda || 0) - (summary.bku ? summary.bku.ganda || 0 : 0),
+      tidakDitemukan: (summary.usahaTidakDitemukan || 0) - (summary.bku ? summary.bku.tidakDitemukan || 0 : 0)
+    };
+    renderCompBlock("Klg", klg);
+  }
+
+  function renderStatusChart(statusTotals, statusOrder) {
+    const ctx = document.getElementById("statusChart");
+    const cssGold = cssVar("--gold");
+    const cssTeal = cssVar("--teal");
+    const cssLine = cssVar("--line-soft");
+
+    const shortLabels = {
+      "OPEN": "Open", "DRAFT": "Draft",
+      "SUBMITTED BY Pencacah": "Submit Pencacah", "SUBMITTED RESPONDENT": "Submit Responden",
+      "REJECTED BY Pengawas": "Reject Pengawas", "REJECTED BY Admin Kabupaten": "Reject Admin",
+      "REVOKED BY Pengawas": "Revoke Pengawas", "REVOKED BY Admin Kabupaten": "Revoke Admin",
+      "EDITED BY Pengawas": "Edit Pengawas", "EDITED BY Admin Kabupaten": "Edit Admin",
+      "APPROVED BY Pengawas": "Approved", "COMPLETED BY Admin Kabupaten": "Completed"
+    };
+    const labels = statusOrder.map(k => shortLabels[k] || k);
+    const vals = statusOrder.map(k => statusTotals[k] || 0);
+    const colors = statusOrder.map(k => (k.indexOf("APPROVED") >= 0 || k.indexOf("COMPLETED") >= 0) ? cssTeal
+      : (k.indexOf("REJECTED") >= 0 || k.indexOf("REVOKED") >= 0) ? "#BC4B2C" : cssGold);
+
+    if (statusChartInstance) statusChartInstance.destroy();
+    statusChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Jumlah dokumen", data: vals, backgroundColor: colors, borderRadius: 3 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 700, easing: "easeOutCubic" },
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, grid: { color: cssLine }, ticks: { font: { family: "IBM Plex Mono", size: 10 } } },
+          x: { grid: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 9 }, autoSkip: false, maxRotation: 60, minRotation: 40 } }
+        }
+      }
+    });
+  }
+
+  // ---- gradasi warna bermakna untuk grafik peringkat: rendah (alert) -> tengah (gold) -> tinggi (teal) ----
+  // dipakai supaya batang grafik tidak monoton satu warna, sekaligus warnanya
+  // langsung menunjukkan level capaian tiap kecamatan.
+  function hexToRgb(hex) {
+    const h = hex.replace("#", "");
+    const n = parseInt(h.length === 3 ? h.split("").map(c => c + c).join("") : h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function lerpColor(c1, c2, t) {
+    const [r1, g1, b1] = hexToRgb(c1), [r2, g2, b2] = hexToRgb(c2);
+    const r = Math.round(r1 + (r2 - r1) * t), g = Math.round(g1 + (g2 - g1) * t), b = Math.round(b1 + (b2 - b1) * t);
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  function rankColor(t, cAlert, cGold, cTeal) {
+    // t: 0 = terendah, 1 = tertinggi
+    return t < 0.5 ? lerpColor(cAlert, cGold, t * 2) : lerpColor(cGold, cTeal, (t - 0.5) * 2);
+  }
+
+  // ---- chart bar Chart.js: progres termasuk Draft, untuk 10 kecamatan definitif ----
+  // ("Tidak Diketahui" sengaja tidak diikutkan, sama seperti peta & peringkat kecamatan)
+  function renderKecChart(rows) {
+    const ctx = document.getElementById("kecChart");
+    if (!ctx) return;
+    const cssGold = cssVar("--gold");
+    const cssTeal = cssVar("--teal");
+    const cssAlert = cssVar("--alert");
+    const cssLine = cssVar("--line-soft");
+
+    const sorted = rows.slice().sort((a, b) => (Number(b.progresInclDraft) || 0) - (Number(a.progresInclDraft) || 0));
+    const labels = sorted.map(r => r.Kelurahan);
+    const vals = sorted.map(r => Math.max(0, Math.min(100, Number(r.progresInclDraft) || 0)));
+    const n = Math.max(1, sorted.length - 1);
+    const colors = sorted.map((_, i) => rankColor(1 - i / n, cssAlert, cssGold, cssTeal));
+
+    if (kecChartInstance) kecChartInstance.destroy();
+    kecChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Progres termasuk Draft (%)", data: vals, backgroundColor: colors, borderRadius: 3 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 700, easing: "easeOutCubic" },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (item) => fmt1(item.parsed.y) + "%" } }
+        },
+        scales: {
+          y: {
+            beginAtZero: true, max: 100,
+            grid: { color: cssLine },
+            ticks: { font: { family: "IBM Plex Mono", size: 10 }, callback: (v) => v + "%" }
+          },
+          x: { grid: { display: false }, ticks: { font: { family: "IBM Plex Mono", size: 10 } } }
+        }
+      }
+    });
+  }
+
+  function defField() {
+    return currentDef === "C"
+      ? { pct: "progresInclDraft", label: "termasuk Draft" }
+      : { pct: "progresExclDraft", label: "tanpa Draft" };
+  }
+
+  function renderKecGrid(rows, unknown) {
+    const f = defField();
+    const sorted = rows.slice().sort((a, b) => (Number(b[f.pct]) || 0) - (Number(a[f.pct]) || 0));
+    const topSet = new Set(sorted.slice(0, 5).map(r => r.Kelurahan));
+    const bottomSet = new Set(sorted.slice(-5).map(r => r.Kelurahan));
+
+    const mount = document.getElementById("kecGrid");
+    const cssGold = cssVar("--gold"), cssTeal = cssVar("--teal"), cssAlert = cssVar("--alert");
+    const nRank = Math.max(1, sorted.length - 1);
+    mount.innerHTML = sorted.map((r, i) => {
+      const pct = Math.max(0, Math.min(100, Number(r[f.pct]) || 0));
+      const cls = ["kec-cell"];
+      if (topSet.has(r.Kelurahan)) cls.push("is-top");
+      if (bottomSet.has(r.Kelurahan)) cls.push("is-bottom");
+      const barColor = rankColor(1 - i / nRank, cssAlert, cssGold, cssTeal);
+      const title = `Assignment: ${fmt(r.assignment)} &middot; ${f.label}: ${fmt1(pct)}%`;
+      return `
+        <div class="${cls.join(" ")}" title="${title.replace(/&middot;/g, "\u00b7")}">
+          <div class="kec-name">${r.Kelurahan || "—"}</div>
+          <div class="kec-bar-track"><div class="kec-bar-fill" style="width:${pct}%; background:${barColor};"></div></div>
+          <div class="kec-pct">${fmt1(pct)}%</div>
+        </div>`;
+    }).join("");
+
+    document.getElementById("kecPanelDesc").textContent =
+      `Progres FASIH ${f.label}, dikelompokkan per kecamatan. "Tidak Diketahui" ditampilkan terpisah di bawah grid.`;
+
+    const rankTop = document.getElementById("rankTop");
+    const rankBottom = document.getElementById("rankBottom");
+    rankTop.innerHTML = sorted.slice(0, 5).map(r =>
+      `<li><span>${r.Kelurahan}</span><span class="rank-pct">${fmt1(Math.max(0, Math.min(100, Number(r[f.pct]) || 0)))}%</span></li>`
+    ).join("");
+    rankBottom.innerHTML = sorted.slice(-5).reverse().map(r =>
+      `<li><span>${r.Kelurahan}</span><span class="rank-pct">${fmt1(Math.max(0, Math.min(100, Number(r[f.pct]) || 0)))}%</span></li>`
+    ).join("");
+
+    const strip = document.getElementById("unknownStrip");
+    if (unknown) {
+      strip.style.display = "flex";
+      const pctVal = Number(unknown[f.pct]);
+      const pctText = (pctVal === null || isNaN(pctVal)) ? "n/a" : fmt1(pctVal) + "%";
+      strip.innerHTML = `<span class="tag">Dipisah dari peringkat</span>
+        <span>"Tidak Diketahui" (kode 3172000) &middot; assignment <span class="num">${fmt(unknown.assignment)}</span>
+        &middot; ${f.label} <span class="num">${pctText}</span> &middot; usaha terdata <span class="num">${fmt(unknown.Terdata)}</span> / prelist <span class="num">${fmt(unknown.Target)}</span></span>`;
+    } else {
+      strip.style.display = "none";
+    }
+  }
+
+  function renderAll(data, sourceLabel, isDemo) {
+    const summary = data.summary || {
+      prelist: 0, assignment: 0, progresExclDraft: 0, progresInclDraft: 0,
+      target: 0, terdata: 0, klgPrelist: 0, klgHasil: 0, klgPct: 0,
+      usahaDitemukan: 0, usahaBaru: 0, usahaTutup: 0, usahaGanda: 0, usahaTidakDitemukan: 0,
+      usahaKeluargaDidata: 0, usahaKeluargaPct: 0, bku: {}, totalSLS: 0
+    };
+    renderKPI(summary);
+    renderTracks(summary);
+    renderStatusChart(data.statusTotals, data.statusOrder);
+    renderCompose(summary);
+    currentKecamatan = data.kecamatan || [];
+    currentUnknown = data.unknown || null;
+    renderKecGrid(currentKecamatan, currentUnknown);
+    renderKecChart(currentKecamatan);
+    const footerSource = document.getElementById("footerSource");
+    if (footerSource) footerSource.textContent = sourceLabel.replace(/&middot;/g, "\u00b7");
+
+    const banner = document.getElementById("demoBanner");
+    banner.classList.toggle("is-visible", !!isDemo);
+  }
+
+  function buildFallbackPayload() {
+    const fb = window.FALLBACK_DATA;
+    const r = fb.ringkasan;
+    return {
+      kecamatan: fb.kecamatan,
+      unknown: fb.unknown || null,
+      statusTotals: fb.statusTotals || {},
+      statusOrder: fb.statusOrder || [],
+      summary: {
+        prelist: r.prelist || 0,
+        assignment: r.assignment || 0,
+        progresExclDraft: r.progres_excl_draft || 0,
+        progresInclDraft: r.progres_incl_draft || 0,
+        target: r.total_usaha_target || 0,
+        terdata: r.total_usaha_terdata || 0,
+        totalPetugas: r.total_petugas || 0,
+        totalAnomali: r.total_anomali_terbuka || 0,
+        totalSLS: r.total_sls || 0,
+        usahaDitemukan: r.usaha_ditemukan || 0,
+        usahaBaru: r.usaha_baru || 0,
+        usahaTutup: r.usaha_tutup || 0,
+        usahaGanda: r.usaha_ganda || 0,
+        usahaTidakDitemukan: r.usaha_tidak_ditemukan || 0,
+        bku: { ditemukan: Math.round((r.usaha_ditemukan||0)*0.7), baru: Math.round((r.usaha_baru||0)*0.6), tutup: Math.round((r.usaha_tutup||0)*0.7), ganda: Math.round((r.usaha_ganda||0)*0.7), tidakDitemukan: Math.round((r.usaha_tidak_ditemukan||0)*0.7) },
+        klgPrelist: r.keluarga_prelist || 0,
+        klgHasil: r.keluarga_hasil || 0,
+        klgPct: r.keluarga_pct || 0,
+        usahaKeluargaDidata: r.usaha_keluarga_didata || 0,
+        usahaKeluargaPct: r.usaha_keluarga_pct || 0
+      }
+    };
+  }
+
+  async function loadFromSheet() {
+    const cfg = window.APP_CONFIG;
+    if (cfg.dataSource === "supabase") {
+      return window.SupabaseEngine.fetchMasterDataSupabase();
+    }
+    // ---- perilaku lama, dipertahankan sebagai fallback/rollback ----
+    const eng = window.SheetEngine;
+    const rows = await eng.fetchMasterData(cfg.sheetId, cfg.tabs.masterData);
+    if (!rows.length) throw new Error("Tab Sheet1 terbaca tapi kosong (0 baris data).");
+    return eng.aggregateMasterData(rows);
+  }
+
+  document.getElementById("kecToggle").addEventListener("click", function (e) {
+    const btn = e.target.closest("button[data-metric]");
+    if (!btn) return;
+    currentDef = btn.getAttribute("data-metric");
+    this.querySelectorAll("button").forEach(b => b.classList.toggle("is-active", b === btn));
+    renderKecGrid(currentKecamatan, currentUnknown);
+  });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const cfg = window.APP_CONFIG;
+    let lastSnapshot = null;
+
+    setupReveal();
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    // ---- Tampilkan banner error kalau ada (lihat script penangkap error di <head>) ----
+    const banner = document.getElementById("jsErrorBanner");
+    const problems = (window.__DASHBOARD_ERRORS || []).slice();
+    if (!window.APP_CONFIG) {
+      problems.unshift("shared-config.js tidak berhasil membuat window.APP_CONFIG (file gagal dimuat/di-parse — cek nama file/path, atau ada karakter tidak biasa seperti tanda kutip miring “ ” yang seharusnya tanda kutip lurus \" di dalam filenya).");
+    } else if (!window.APP_CONFIG.menuStatus) {
+      problems.unshift("window.APP_CONFIG termuat tapi menuStatus tidak ada — menu navigasi tidak bisa ditampilkan.");
+    }
+    if (!window.Chart) {
+      problems.unshift("Library Chart.js (shared/chart.umd.js) gagal dimuat — cek nama file/path-nya ada di repo, grafik tidak akan tampil.");
+    }
+    if (problems.length) {
+      banner.style.display = "block";
+      banner.textContent = "⚠ Ditemukan masalah teknis:\n" + problems.map(p => "• " + p).join("\n");
+    }
+
+    function useFallback(reason) {
+      console.info("[beranda] memakai data contoh —", reason);
+      const srcName = cfg.dataSource === "supabase" ? "Supabase" : "Google Sheet";
+      document.getElementById("demoBannerText").textContent =
+        srcName + " belum terbaca (" + reason + ") — angka di bawah ini adalah data contoh, bukan data SE2026 sebenarnya.";
+      renderAll(buildFallbackPayload(), "Data contoh — " + srcName + " belum terbaca (" + reason + ")", true);
+      window.setSyncBadge("Mode demo (data contoh) — " + srcName + " belum tersambung", "warn");
+    }
+
+    async function sync(isFirstLoad) {
+      try {
+        const data = await loadFromSheet();
+        const snapshot = JSON.stringify(data.summary) + JSON.stringify(data.kecamatan) + JSON.stringify(data.unknown);
+        if (snapshot === lastSnapshot) {
+          window.setSyncBadge("Sinkron &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+          return;
+        }
+        lastSnapshot = snapshot;
+        const sourceLabel = cfg.dataSource === "supabase"
+          ? `Supabase (sls_data) &middot; ${data.summary.totalSLS.toLocaleString("id-ID")} baris SLS terbaca`
+          : `Tab "Sheet1" &middot; ${data.summary.totalSLS.toLocaleString("id-ID")} baris SLS terbaca`;
+        renderAll(data, sourceLabel, false);
+        const badgeSourceLabel = cfg.dataSource === "supabase" ? "Supabase" : "Google Sheet";
+        window.setSyncBadge("Diperbarui dari " + badgeSourceLabel + " &middot; " + new Date().toLocaleTimeString("id-ID"), "ok");
+      } catch (err) {
+        console.error("[beranda] gagal memuat Google Sheet:", err);
+        if (isFirstLoad) {
+          useFallback(err.message);
+        } else {
+          window.setSyncBadge("Gagal sinkron ulang, memakai data terakhir", "err");
+        }
+      }
+    }
+
+    if (!cfg || !cfg.sheetId) {
+      useFallback("shared-config.js belum diisi");
+      return;
+    }
+
+    sync(true);
+    setInterval(() => sync(false), (cfg.refreshSeconds || 45) * 1000);
+  });
+})();
+</script>
+</body>
+</html>
